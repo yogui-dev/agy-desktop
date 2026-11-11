@@ -31,8 +31,10 @@
         "nsis",
         "portable"
       ],
-      "icon": "public/icon.ico"
+      "icon": "public/icon.ico",
+      "signAndEditExecutable": false
     },
+    "forceCodeSigning": false,
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,

@@ -4,20 +4,14 @@ const fs = require('fs');
 const os = require('os');
 const { execFileSync, spawn } = require('child_process');
 
-// Single instance lock to prevent duplicate background instances
-const gotTheLock = app.requestSingleInstanceLock();
-if (!gotTheLock) {
-  app.quit();
-} else {
-  app.on('second-instance', () => {
-    if (mainWindow) {
-      if (!mainWindow.isVisible()) mainWindow.show();
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
-  });
-}
+process.on('uncaughtException', (err) => {
+  console.error('[UncaughtException]', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[UnhandledRejection]', reason);
+});
 
+// Main process startup
 const USER_HOME = process.env.USERPROFILE || process.env.HOME || '';
 const SESSION_MESH_SCRIPT = path.join(USER_HOME, '.gemini', 'config', 'plugins', 'session-mesh', 'scripts', 'session-mesh.cjs');
 const AGY_BIN = path.join(process.env.LOCALAPPDATA || '', 'agy', 'bin', 'agy.exe');
@@ -66,7 +60,7 @@ ipcMain.handle('get-telemetry', async () => {
 ipcMain.handle('get-models', async () => {
   if (!fs.existsSync(AGY_BIN)) return [];
   try {
-    const stdout = execFileSync(AGY_BIN, ['models'], {
+    const { stdout } = await execFileAsync(AGY_BIN, ['models'], {
       encoding: 'utf8',
       windowsHide: true,
       timeout: 6000
@@ -290,7 +284,7 @@ ipcMain.handle('get-mcp-status', async () => {
   const agyMcpList = [];
   if (fs.existsSync(AGY_BIN)) {
     try {
-      const stdout = execFileSync(AGY_BIN, ['mcp', 'list'], {
+      const { stdout } = await execFileAsync(AGY_BIN, ['mcp', 'list'], {
         encoding: 'utf8',
         windowsHide: true,
         timeout: 5000
@@ -310,7 +304,7 @@ ipcMain.handle('get-plugins-status', async () => {
   const plugins = [];
   if (fs.existsSync(AGY_BIN)) {
     try {
-      const stdout = execFileSync(AGY_BIN, ['plugins', 'list'], {
+      const { stdout } = await execFileAsync(AGY_BIN, ['plugins', 'list'], {
         encoding: 'utf8',
         windowsHide: true,
         timeout: 5000
@@ -482,6 +476,9 @@ function createTray() {
 }
 
 function createWindow() {
+  try {
+    fs.appendFileSync(debugLogPath, `[createWindow] initializing BrowserWindow\n`);
+  } catch (e) {}
   const appIcon = getAppIcon();
   mainWindow = new BrowserWindow({
     width: 1300,
@@ -500,12 +497,21 @@ function createWindow() {
   });
 
   mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    try {
+      fs.appendFileSync(debugLogPath, `[RendererConsole][L${level}] ${message} (${sourceId}:${line})\n`);
+    } catch (e) {}
     console.log(`[Renderer Console] [Level ${level}] ${message} (${sourceId}:${line})`);
   });
   mainWindow.webContents.on('render-process-gone', (event, detailed) => {
+    try {
+      fs.appendFileSync(debugLogPath, `[RenderGone] ${JSON.stringify(detailed)}\n`);
+    } catch (e) {}
     console.error('Render process gone:', detailed);
   });
   mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    try {
+      fs.appendFileSync(debugLogPath, `[FailedLoad] ${errorCode}: ${errorDescription}\n`);
+    } catch (e) {}
     console.error('Failed to load:', errorCode, errorDescription);
   });
 
@@ -516,12 +522,27 @@ function createWindow() {
     }
   });
 
+  mainWindow.once('ready-to-show', () => {
+    if (mainWindow) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   if (devUrl) {
     mainWindow.loadURL(devUrl);
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
+
+  // Ensure window is always visible
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  }, 1000);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
