@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('agy', {
   getTelemetry: () => ipcRenderer.invoke('get-telemetry'),
@@ -26,6 +26,11 @@ contextBridge.exposeInMainWorld('agy', {
   transcribeAudio: (audioBuffer, mimeType) => ipcRenderer.invoke('transcribe-audio', { audioBuffer, mimeType }),
   selectAudioFile: () => ipcRenderer.invoke('select-audio-file'),
   speakText: (text) => ipcRenderer.invoke('speak-text', { text }),
+
+  // General File Attachments (Any file, images, code, docs)
+  selectFiles: () => ipcRenderer.invoke('select-files'),
+  getFileInfo: (filePath) => ipcRenderer.invoke('get-file-info', filePath),
+  getPathForFile: (file) => (webUtils ? webUtils.getPathForFile(file) : (file.path || '')),
 
   isElectron: true
 });

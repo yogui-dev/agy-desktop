@@ -188,6 +188,50 @@ ipcMain.handle('speak-text', async (_, { text }) => {
   }
 });
 
+// General File Selection and Metadata Handlers
+ipcMain.handle('select-files', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Seleccionar archivos para adjuntar al chat',
+    properties: ['openFile', 'multiSelections']
+  });
+
+  if (result.canceled || result.filePaths.length === 0) return [];
+
+  return result.filePaths.map(filePath => {
+    try {
+      const stats = fs.statSync(filePath);
+      return {
+        path: filePath,
+        name: path.basename(filePath),
+        size: stats.size,
+        ext: path.extname(filePath).toLowerCase().replace('.', '')
+      };
+    } catch (e) {
+      return {
+        path: filePath,
+        name: path.basename(filePath),
+        size: 0,
+        ext: path.extname(filePath).toLowerCase().replace('.', '')
+      };
+    }
+  });
+});
+
+ipcMain.handle('get-file-info', async (_, filePath) => {
+  if (!filePath || !fs.existsSync(filePath)) return null;
+  try {
+    const stats = fs.statSync(filePath);
+    return {
+      path: filePath,
+      name: path.basename(filePath),
+      size: stats.size,
+      ext: path.extname(filePath).toLowerCase().replace('.', '')
+    };
+  } catch (e) {
+    return null;
+  }
+});
+
 // IPC Handler: Embedded In-App Turn Execution (Zero External Windows)
 ipcMain.handle('start-turn', async (event, { prompt, model, conversationId, workspace }) => {
   if (!fs.existsSync(AGY_BIN)) return { error: 'agy.exe no encontrado en el sistema' };

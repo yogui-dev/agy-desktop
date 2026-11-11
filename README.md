@@ -26,17 +26,23 @@ Permite interactuar con los agentes de Antigravity en tiempo real, visualizar te
 - **Gestión Visual de Locks:** Bloquea directorios o archivos (`lock-path`) antes de realizar cambios estructurales y libéralos (`unlock-path`) al finalizar.
 - **Protección Automática:** Se integra con el hook global `PreToolUse` de Antigravity, bloqueando intentos de edición concurrentes en rutas reservadas por otra sesión.
 
-### 4. 📡 Tablón de Mensajería Inter-Agente (Mesh Chat)
+### 4. 📎 Adjuntar Archivos & Arrastrar y Soltar (Drag & Drop)
+- **Soporte Universal de Archivos:** Adjunta código (`.js`, `.py`, `.ts`, `.html`), documentos (`.pdf`, `.docx`, `.txt`, `.csv`), imágenes (`.png`, `.jpg`, `.webp`) o configuraciones (`.json`, `.yaml`, `.env`).
+- **Arrastrar y Soltar Nativo (Drag & Drop):** Arrastra archivos directamente desde el Explorador de Windows a la ventana del chat con indicación visual de zona de captura (*dropzone*).
+- **Bandeja de Adjuntos (Chips):** Muestra el nombre, tamaño y tipo de archivo con opción de remover archivos individuales antes de ejecutar el turno.
+- **Trazabilidad en Mensajes:** Los mensajes del usuario muestran tarjetas interactivas de los archivos adjuntos analizados por el agente.
+
+### 5. 📡 Tablón de Mensajería Inter-Agente (Mesh Chat)
 - Envía mensajes reactivos directos (`send-message`) a otra sesión específica de la flota.
 - Difunde avisos globales (*broadcast*) para alertar a todos los agentes en ejecución.
 
-### 5. 🎙️ Interacción por Voz & Comprensión de Audio (Whisper & Catalina)
+### 6. 🎙️ Interacción por Voz & Comprensión de Audio (Whisper & Catalina)
 - **Grabación Directa con Micrófono:** Graba instrucciones habladas desde el botón de micrófono en la barra de chat con temporizador en vivo y controles de cancelación/confirmación.
 - **Transcripción Inteligente con OpenAI Whisper:** Transcribe el audio en sub-segundos con sesgo de vocabulario especializado para términos de ingeniería (`Jorge`, `Yogui`, `Antigravity`, `CLI`, `Git`, `Electron`, etc.).
 - **Adjuntar y Transcribir Archivos de Audio:** Carga y transcribe archivos de audio existentes (`.mp3`, `.wav`, `.m4a`, `.ogg`, `.webm`, `.flac`).
 - **Lectura en Voz Alta (TTS):** Escucha las respuestas del asistente con la voz chilena oficial **Catalina Cálida** (`es-CL-CatalinaNeural`) mediante el botón de altavoz en cada mensaje.
 
-### 6. 💾 Historial Persistente & Gestión de Conversaciones
+### 7. 💾 Historial Persistente & Gestión de Conversaciones
 - Guarda automáticamente cada conversación en almacenamiento local, sobreviviendo al cierre y reinicio de la aplicación.
 - Pestaña **Historial** en la barra lateral para navegar entre conversaciones previas, continuar chats anteriores o descartar los que ya no se necesiten.
 - Sincronización continua de IDs con Antigravity CLI para reanudar el contexto previo del agente.

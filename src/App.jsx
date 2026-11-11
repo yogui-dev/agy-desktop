@@ -32,7 +32,11 @@ import {
   Paperclip,
   Loader2,
   Check,
-  X
+  X,
+  File,
+  FileText,
+  Image as ImageIcon,
+  UploadCloud
 } from 'lucide-react';
 
 const STORAGE_KEY_CONVS = 'agy_desktop_conversations';
@@ -152,6 +156,10 @@ export default function App() {
   const audioChunksRef = useRef([]);
   const recordingTimerRef = useRef(null);
   const currentAudioElementRef = useRef(null);
+
+  // File Attachments & Drag-and-Drop State
+  const [attachedFiles, setAttachedFiles] = useState([]);
+  const [isDragging, setIsDragging] = useState(false);
 
   // Locks inputs
   const [lockPathInput, setLockPathInput] = useState('');
@@ -307,12 +315,15 @@ export default function App() {
     return () => clearInterval(interval);
   }, [autoRefresh]);
 
-  // Handle in-app turn submission
+  // Handle in-app turn submission with file attachments support
   const handleSendPrompt = async () => {
-    if (!chatInput.trim() || isAgentRunning || !window.agy) return;
+    if ((!chatInput.trim() && attachedFiles.length === 0) || isAgentRunning || !window.agy) return;
 
     const userText = chatInput.trim();
+    const currentAttachments = [...attachedFiles];
+
     setChatInput('');
+    setAttachedFiles([]);
     setIsAgentRunning(true);
     streamingResponseRef.current = '';
     streamingThoughtRef.current = '';
@@ -321,19 +332,28 @@ export default function App() {
     setStreamingThought('');
     setCurrentTools([]);
 
-    // Add user message to UI immediately
+    // Add user message to UI immediately with attachments
     setChatMessages(prev => [
       ...prev,
       {
         id: Date.now().toString(),
         role: 'user',
-        content: userText
+        content: userText || '(Archivos adjuntos para análisis)',
+        attachments: currentAttachments
       }
     ]);
 
+    // Build prompt with attached file paths
+    let fullPrompt = userText;
+    if (currentAttachments.length > 0) {
+      const fileList = currentAttachments.map(f => `- ${f.path} (${formatFileSize(f.size)})`).join('\n');
+      const attachHeader = `[Archivos adjuntos por el usuario]:\n${fileList}\n\n`;
+      fullPrompt = attachHeader + (userText ? `Instrucción: ${userText}` : 'Por favor analiza y revisa los archivos adjuntos provistos.');
+    }
+
     // Call startTurn directly inside Electron (zero external windows!)
     await window.agy.startTurn({
-      prompt: userText,
+      prompt: fullPrompt,
       model: selectedModel,
       conversationId: activeConversationId || undefined,
       workspace: 'C:\\Proyectos\\yoguidev'
@@ -532,6 +552,104 @@ export default function App() {
     const m = Math.floor(secs / 60).toString().padStart(2, '0');
     const s = (secs % 60).toString().padStart(2, '0');
     return `${m}:${s}`;
+  };
+
+  // File Attachments Helper Functions
+  const formatFileSize = (bytes) => {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  };
+
+  const getFileCategoryIcon = (ext) => {
+    const e = (ext || '').toLowerCase();
+    if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp'].includes(e)) {
+      return <ImageIcon className="w-3.5 h-3.5 text-purple-400" />;
+    }
+    if (['js', 'jsx', 'ts', 'tsx', 'py', 'json', 'html', 'css', 'sql', 'sh', 'md', 'yml', 'yaml', 'toml', 'env'].includes(e)) {
+      return <FileCode2 className="w-3.5 h-3.5 text-amber-400" />;
+    }
+    if (['pdf', 'doc', 'docx', 'txt', 'csv', 'xlsx'].includes(e)) {
+      return <FileText className="w-3.5 h-3.5 text-blue-400" />;
+    }
+    return <File className="w-3.5 h-3.5 text-gray-400" />;
+  };
+
+  const handleSelectFiles = async () => {
+    if (isAgentRunning || !window.agy) return;
+    try {
+      const files = await window.agy.selectFiles();
+      if (files && files.length > 0) {
+        setAttachedFiles(prev => {
+          const existingPaths = new Set(prev.map(f => f.path));
+          const newFiles = files.filter(f => !existingPaths.has(f.path));
+          return [...prev, ...newFiles];
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error al seleccionar archivos: ' + err.message);
+    }
+  };
+
+  const handleRemoveAttachedFile = (pathToRemove) => {
+    setAttachedFiles(prev => prev.filter(f => f.path !== pathToRemove));
+  };
+
+  // Drag-and-Drop Handlers
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDragging) setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    setIsDragging(false);
+  };
+
+  const handleDropFiles = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const dropped = e.dataTransfer.files;
+    if (!dropped || dropped.length === 0) return;
+
+    const filesToAdd = [];
+    for (let i = 0; i < dropped.length; i++) {
+      const file = dropped[i];
+      let realPath = '';
+      if (window.agy && window.agy.getPathForFile) {
+        realPath = window.agy.getPathForFile(file);
+      } else {
+        realPath = file.path || '';
+      }
+
+      if (realPath && window.agy && window.agy.getFileInfo) {
+        const info = await window.agy.getFileInfo(realPath);
+        if (info) filesToAdd.push(info);
+      } else if (realPath) {
+        filesToAdd.push({
+          path: realPath,
+          name: file.name,
+          size: file.size,
+          ext: file.name.split('.').pop() || ''
+        });
+      }
+    }
+
+    if (filesToAdd.length > 0) {
+      setAttachedFiles(prev => {
+        const existingPaths = new Set(prev.map(f => f.path));
+        const newFiles = filesToAdd.filter(f => !existingPaths.has(f.path));
+        return [...prev, ...newFiles];
+      });
+    }
   };
 
   const handleLock = async () => {
@@ -874,7 +992,27 @@ export default function App() {
 
         {/* TAB: EMBEDDED IN-APP CHAT */}
         {activeTab === 'chat' && (
-          <div className="flex-1 flex flex-col overflow-hidden">
+          <div
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDropFiles}
+            className="flex-1 flex flex-col overflow-hidden relative"
+          >
+            {/* Drag & Drop Visual Overlay */}
+            {isDragging && (
+              <div className="absolute inset-0 z-50 bg-[#0d1117]/95 backdrop-blur-md border-2 border-dashed border-blue-500 rounded-xl m-4 flex flex-col items-center justify-center gap-3 pointer-events-none animate-fade-in shadow-2xl">
+                <div className="w-16 h-16 rounded-full bg-blue-600/20 border border-blue-500/50 flex items-center justify-center animate-bounce">
+                  <UploadCloud className="w-8 h-8 text-blue-400" />
+                </div>
+                <p className="text-base font-bold text-white tracking-wide">
+                  Suelta los archivos aquí para adjuntarlos al chat
+                </p>
+                <p className="text-xs text-gray-400 font-mono">
+                  Código, Documentos, Imágenes, PDFs o cualquier archivo de tu equipo
+                </p>
+              </div>
+            )}
+
             {/* Conversation Feed */}
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
               {chatMessages.map(msg => (
@@ -897,6 +1035,28 @@ export default function App() {
                         : 'bg-[#161b22] border border-[#30363d] text-gray-200'
                     }`}
                   >
+                    {/* Render attached files chips in user message */}
+                    {msg.attachments && msg.attachments.length > 0 && (
+                      <div className="mb-2.5 pb-2 border-b border-blue-400/30 space-y-1.5">
+                        <span className="text-[10px] text-blue-100 font-semibold uppercase tracking-wider block">
+                          Archivos adjuntos ({msg.attachments.length}):
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {msg.attachments.map((att, idx) => (
+                            <div
+                              key={idx}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-700/80 border border-blue-400/50 text-[11px] text-white shadow-sm"
+                              title={att.path}
+                            >
+                              {getFileCategoryIcon(att.ext)}
+                              <span className="font-medium truncate max-w-[200px]">{att.name}</span>
+                              <span className="text-[9px] text-blue-200 font-mono">({formatFileSize(att.size)})</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Render tool executions if any */}
                     {msg.tools && msg.tools.length > 0 && (
                       <div className="mb-3 space-y-1.5 border-b border-[#30363d] pb-2">
@@ -995,8 +1155,42 @@ export default function App() {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* In-App Chat Input Bar with Microphone & Audio Upload */}
+            {/* In-App Chat Input Bar with File Attachments & Microphone */}
             <div className="p-4 border-t border-[#30363d] bg-[#161b22]">
+              {/* Attachment Chips Tray */}
+              {attachedFiles.length > 0 && (
+                <div className="mb-3 p-2.5 rounded-xl bg-[#0d1117] border border-[#30363d] flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] font-semibold text-gray-400 flex items-center gap-1.5 mr-1">
+                    <Paperclip className="w-3.5 h-3.5 text-blue-400" />
+                    Adjuntos ({attachedFiles.length}):
+                  </span>
+                  {attachedFiles.map(file => (
+                    <div
+                      key={file.path}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#161b22] border border-[#30363d] text-xs text-gray-200 shadow-sm"
+                      title={file.path}
+                    >
+                      {getFileCategoryIcon(file.ext)}
+                      <span className="font-mono text-[11px] font-medium truncate max-w-[180px]">{file.name}</span>
+                      <span className="text-[10px] text-gray-400 font-mono">({formatFileSize(file.size)})</span>
+                      <button
+                        onClick={() => handleRemoveAttachedFile(file.path)}
+                        className="ml-1 text-gray-400 hover:text-red-400 p-0.5 rounded transition cursor-pointer"
+                        title="Quitar archivo"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={handleSelectFiles}
+                    className="text-[11px] text-blue-400 hover:text-blue-300 font-medium px-2 py-0.5 rounded hover:bg-[#161b22] transition cursor-pointer"
+                  >
+                    + Agregar más
+                  </button>
+                </div>
+              )}
+
               {isRecording ? (
                 // Dedicated Active Recording Bar
                 <div className="flex items-center justify-between bg-[#0d1117] border border-red-500/50 rounded-xl p-3.5 shadow-lg">
@@ -1036,15 +1230,16 @@ export default function App() {
                   <span>Transcribiendo audio con Whisper (IA)...</span>
                 </div>
               ) : (
-                // Standard Input Bar with Mic & Attachment buttons
+                // Standard Input Bar with File Attachment, Mic & Send buttons
                 <div className="flex items-center gap-2.5">
                   <button
-                    onClick={handleAttachAudioFile}
+                    onClick={handleSelectFiles}
                     disabled={isAgentRunning}
-                    className="p-3 rounded-xl bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] text-gray-400 hover:text-white transition cursor-pointer disabled:opacity-50"
-                    title="Cargar y transcribir archivo de audio (.mp3, .wav, .m4a, .ogg)"
+                    className="p-3 rounded-xl bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] text-gray-400 hover:text-white transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                    title="Adjuntar archivos (código, imágenes, PDFs, documentos)"
                   >
                     <Paperclip className="w-4 h-4" />
+                    <span className="text-[11px] font-semibold hidden md:inline">Adjuntar</span>
                   </button>
 
                   <button
@@ -1059,7 +1254,7 @@ export default function App() {
 
                   <textarea
                     rows={2}
-                    placeholder="Escribe tu instrucción o graba un audio con el micrófono..."
+                    placeholder="Escribe tu instrucción, arrastra archivos aquí o graba con el micrófono..."
                     value={chatInput}
                     onChange={e => setChatInput(e.target.value)}
                     onKeyDown={e => {
@@ -1083,7 +1278,7 @@ export default function App() {
                   ) : (
                     <button
                       onClick={handleSendPrompt}
-                      disabled={!chatInput.trim()}
+                      disabled={!chatInput.trim() && attachedFiles.length === 0}
                       className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-semibold text-xs flex items-center gap-2 transition shadow-md cursor-pointer"
                     >
                       <Send className="w-4 h-4" />
