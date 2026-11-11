@@ -1,152 +1,148 @@
-# 🛸 AGY Desktop — Antigravity Embedded Control Plane
+# 🛸 AGY Desktop — Antigravity Agent Control Plane
 
-**AGY Desktop** es una aplicación nativa de escritorio para Windows diseñada para orquestar, supervisar y controlar agentes de **Antigravity CLI** en tiempo real. 
+**AGY Desktop** es una aplicación de escritorio nativa para Windows (React 19 + Electron 34 + Tailwind CSS + Vite 6) diseñada como centro de control, orquestación y entorno interactivo para **Antigravity CLI**.
 
-Toda la interacción con el modelo y la ejecución de herramientas corre de manera **embebida dentro de la aplicación**, eliminando la apertura de ventanas de terminal externas y permitiendo trabajar con múltiples sesiones concurrentes sin colisiones de código ni sobreescrituras accidentales.
-
----
-
-## 📸 Características Principales
-
-### 1. 💬 Agente Interactivo Embebido (Zero External Windows)
-- **Ejecución 100% In-App:** Las instrucciones se procesan en segundo plano (`windowsHide: true`) con el binario nativo de Antigravity CLI.
-- **Streaming NDJSON en Vivo:** Visualización en tiempo real del flujo de pensamiento (*thinking*), generación de respuestas token por token y estado de herramientas (`ACTIVE`, `DONE`, `ERROR`).
-- **Control de Turnos:** Botón para interrumpir o detener la ejecución en cualquier momento (`cancelTurn`).
-- **Selector Dinámico de Modelos:** Alterna al instante entre modelos como `Gemini 3.8 Flash (High)`, `Claude Sonnet 4.6 (Thinking)`, y los demás modelos disponibles en tu entorno CLI.
-
-### 2. 🔐 Autenticación Heredada (Zero-Auth Friction)
-- Hereda directamente las credenciales almacenadas en el Administrador de Credenciales de Windows (`gemini:antigravity`).
-- No requiere claves API manuales, tokens en `.env` ni inicios de sesión repetitivos.
-- Mantiene acceso a los mismos plugins, hooks y servidores MCP configurados en tu máquina.
-
-### 3. 🌐 Mission Control & Telemetría en Vivo (`session-mesh`)
-- **Detección Determinista de Sesiones Vivas:** Utiliza el mecanismo de exclusión mutua de archivos (`EBUSY` sobre handles de `presence/<convId>.lock`), reportando con precisión cero-costo qué sesiones siguen activas y cuáles han cerrado.
-- **Monitoreo en Tiempo Real:** Inspecciona la última consulta del usuario, el pensamiento del modelo y las tareas asíncronas en ejecución en cada sesión paralela.
-- **Transición Fluida:** Haz clic en cualquier sesión detectada para inspeccionarla o continuar su contexto directamente desde el chat de AGY Desktop.
-
-### 4. 🛡️ Gestor Visual de Bloqueos (Path Locking)
-- **Prevención de Condiciones de Carrera:** Reserva archivos o carpetas críticas (ej. `cerebro-digital/`, `src/api/`) para que otra sesión no modifique los mismos archivos en paralelo.
-- **Guardián PreToolUse:** El hook de `session-mesh` intercepta las llamadas a `edit_file` y `write_file` de cualquier sesión y bloquea escrituras en rutas reservadas por otra sesión activa.
-- **Liberación Inmediata:** Libera locks con 1 clic desde la pestaña **Locks**.
-
-### 5. 📻 Tablón de Mensajes Inter-Agente (Mesh Chat)
-- Envía mensajes reactivos directos a otra sesión de Antigravity CLI mediante la API de mensajería interna.
-- Realiza transmisiones masivas (*broadcast*) que notifican a todos los agentes que estén trabajando en el mismo workspace.
+Permite interactuar con los agentes de Antigravity en tiempo real, visualizar telemetría multi-sesión, coordinar bloqueos de archivos (*path locks*) para prevenir colisiones entre agentes concurrentes y comunicarse entre sesiones, **todo directamente dentro de la interfaz gráfica sin abrir ventanas de terminal externas**.
 
 ---
 
-## 🏗️ Arquitectura Técnica
+## ✨ Características Principales
 
-```
-┌───────────────────────────────────────────────────────────┐
-│                       AGY Desktop                         │
-│  ┌─────────────────────────────────────────────────────┐  │
-│  │   Vite + React 19 + Tailwind CSS + Lucide Icons     │  │
-│  │   (Chat Embebido, Dashboard, Locks, Mesh)           │  │
-│  └──────────────────────────┬──────────────────────────┘  │
-│                             │ IPC Bridge (contextBridge)   │
-│  ┌──────────────────────────▼──────────────────────────┐  │
-│  │           Electron Main Process (Node.js)           │  │
-│  │    • spawn agy.exe (-p, --output-format stream-json)│  │
-│  │    • session-mesh.cjs (telemetría y bloqueos)       │  │
-│  └──────────────────────────┬──────────────────────────┘  │
-└─────────────────────────────┼─────────────────────────────┘
-                              │
-          ┌───────────────────┴───────────────────┐
-          ▼                                       ▼
-┌───────────────────────────┐           ┌───────────────────┐
-│     Antigravity CLI       │           │   Session Mesh    │
-│  • Token Streaming        │           │ • Lock Guard Hook │
-│  • Tool Executions        │           │ • EBUSY Detector  │
-│  • Windows Credential     │           │ • Reactive Relay  │
-└───────────────────────────┘           └───────────────────┘
+### 1. 💬 Agente Interactivo In-App (Sin Ventanas de Terminal)
+- **Ejecución 100% Embebida:** Las instrucciones se procesan a través del motor headless de Antigravity (`agy.exe` con `--output-format stream-json`) en segundo plano sin desplegar ventanas de PowerShell o Windows Terminal (`windowsHide: true`).
+- **Streaming de Tokens en Tiempo Real:** Visualización en vivo de los deltas de texto generados por el modelo a 60 fps.
+- **Trazabilidad de Herramientas:** Indicadores visuales interactivos de cada herramienta ejecutada durante el turno (`read_file`, `edit_file`, `run_command`, etc.) con su estado (`ACTIVE`, `DONE`, parámetros).
+- **Control de Turno:** Botón para cancelar o detener la ejecución en vivo en cualquier momento.
+- **Selector de Modelos en Caliente:** Conmuta entre modelos disponibles (`gemini-3.8-flash-high`, `claude-sonnet-4-6`, etc.) directamente desde la cabecera.
+
+### 2. 🔑 Cero Login Adicional (Zero-Auth)
+- Hereda directamente las credenciales existentes de Windows Credential Manager (`gemini:antigravity`).
+- Sin necesidad de configurar API keys o autenticaciones duplicadas.
+- Comparte automáticamente tus configuraciones, workspaces, servidores MCP y plugins habilitados.
+
+### 3. 🛡️ Coordinación Multi-Sesión & Path Locking (`session-mesh`)
+- **Mission Control en Vivo:** Supervisa todas las sesiones de Antigravity CLI activas en la máquina local: ID de conversación, último prompt del usuario, herramientas activas y tareas asíncronas en progreso.
+- **Detección Atómica de Presencia:** Detección en sub-milisegundos de sesiones vivas o terminadas mediante validación de descriptores de archivo Win32 (`~/.gemini/antigravity-cli/presence/*.lock`), purgando bloqueos huérfanos sin sobrecarga de sondeo.
+- **Gestión Visual de Locks:** Bloquea directorios o archivos (`lock-path`) antes de realizar cambios estructurales y libéralos (`unlock-path`) al finalizar.
+- **Protección Automática:** Se integra con el hook global `PreToolUse` de Antigravity, bloqueando intentos de edición concurrentes en rutas reservadas por otra sesión.
+
+### 4. 📡 Tablón de Mensajería Inter-Agente (Mesh Chat)
+- Envía mensajes reactivos directos (`send-message`) a otra sesión específica de la flota.
+- Difunde avisos globales (*broadcast*) para alertar a todos los agentes en ejecución.
+
+---
+
+## 🏗️ Arquitectura del Sistema
+
+```mermaid
+flowchart TD
+    subgraph UI ["AGY Desktop (Electron + React 19)"]
+        ChatView["Chat Interactivo In-App"]
+        TelemetryPanel["Panel de Telemetría"]
+        LockManager["Gestor de Path Locks"]
+        MeshView["Mensajería Inter-Sesión"]
+    end
+
+    subgraph IPC ["Canal IPC Seguro (preload.cjs)"]
+        startTurn["start-turn / cancel-turn"]
+        getTelemetry["get-telemetry"]
+        lockPath["lock-path / unlock-path"]
+        sendMsg["send-message / broadcast"]
+    end
+
+    subgraph Backend ["Electron Main Process (main.cjs)"]
+        HeadlessRunner["Spawn agy.exe (windowsHide: true)"]
+        MeshBridge["Node Bridge -> session-mesh.cjs"]
+    end
+
+    subgraph Core ["Motor Antigravity & Sistema Operativo"]
+        AGY["agy.exe CLI Core"]
+        WinCred["Windows Credential Manager (gemini:antigravity)"]
+        LockRegistry["session_locks.json"]
+        PresenceLocks["~/.gemini/antigravity-cli/presence/*.lock"]
+        AgentAPI["agy agentapi (Inter-agent IPC)"]
+    end
+
+    UI --> IPC
+    IPC --> Backend
+    HeadlessRunner -->|Stream NDJSON| AGY
+    HeadlessRunner --> WinCred
+    MeshBridge --> LockRegistry
+    MeshBridge --> PresenceLocks
+    MeshBridge --> AgentAPI
 ```
 
 ---
 
-## 📦 Instalación y Uso en Windows
+## 📦 Instalación y Uso
 
-### Requisitos Previos
-- **Windows 10/11** (64-bit)
-- **Node.js 18+** y **pnpm** (`npm install -g pnpm`)
-- **Antigravity CLI** instalado y autenticado en tu equipo (`agy.exe`).
+### Prerrequisitos
+- **Windows 10 / 11**
+- **Node.js** >= 18
+- **pnpm** >= 9 (`npm install -g pnpm`)
+- **Antigravity CLI** instalado y autenticado en tu equipo (`agy`).
 
-### Instalación con Acceso Directo (Recomendado)
-El proyecto incluye un instalador automático para Windows que compila, empaqueta y registra la aplicación en el **Menú Inicio** y en el **Escritorio**:
-
-1. Clona el repositorio:
-   ```bash
-   git clone https://github.com/yogui-dev/agy-desktop.git
-   cd agy-desktop
-   ```
-2. Instala dependencias:
-   ```bash
-   pnpm install
-   ```
-3. Ejecuta el script de instalación:
-   - Haz doble clic en `install-agy-desktop.cmd`, o ejecuta en PowerShell:
-     ```powershell
-     .\install-agy-desktop.ps1
-     ```
-
-La aplicación se instalará en:
-```
-%LOCALAPPDATA%\Programs\AGY Desktop\
-```
-Y generará accesos directos automáticos:
-- `Escritorio\AGY Desktop.lnk`
-- `Menú Inicio\Programas\AGY Desktop.lnk`
-
-### Desinstalación
-Si deseas remover la aplicación instalada, ejecuta:
-```cmd
-"%LOCALAPPDATA%\Programs\AGY Desktop\uninstall.cmd"
-```
-O elimina la carpeta en `%LOCALAPPDATA%\Programs\AGY Desktop` y sus accesos directos.
-
----
-
-## 🛠️ Desarrollo Local
-
+### 1. Clonar e Instalar Dependencias
 ```bash
-# Iniciar frontend con Vite + Electron con recarga en vivo (HMR)
+git clone https://github.com/yogui-dev/agy-desktop.git
+cd agy-desktop
+pnpm install
+```
+
+### 2. Modo Desarrollo
+```bash
+# Iniciar servidor Vite + ventana Electron con recarga en caliente
 pnpm dev
+```
 
-# Iniciar únicamente la ventana Electron apuntando al build
-pnpm dev:electron
-# o mediante el lanzador rápido:
-start-desktop.cmd
-
-# Compilar UI y generar app.asar optimizado (~300 KB)
+### 3. Compilar y Empaquetar
+```bash
+# Compilar frontend y empaquetar app.asar
 pnpm build
 ```
 
+### 4. Instalador para Windows (.exe)
+Puedes generar el binario independiente o instalarlo en tu sistema con un solo clic:
+
+- **Instalación local instantánea:** Ejecuta `install-agy-desktop.cmd` (o `install-agy-desktop.ps1`). Instala la aplicación en `%LOCALAPPDATA%\Programs\AGY Desktop` y crea accesos directos en el Escritorio y Menú Inicio.
+- **Compilar paquete portátil:**
+  ```bash
+  pnpm dist:portable
+  ```
+
 ---
 
-## 🗂️ Estructura del Proyecto
+## 🛠️ Estructura del Proyecto
 
 ```
 agy-desktop/
 ├── electron/
-│   ├── main.cjs            # Proceso principal: runner embebido de agy.exe y puente session-mesh
-│   └── preload.cjs         # ContextBridge seguro hacia el renderer
-├── public/
-│   └── icon.ico            # Ícono de la aplicación
-├── scripts/
-│   └── pack-asar.cjs       # Empaquetador automatizado de app.asar ultra-ligero
+│   ├── main.cjs            # Proceso principal: IPC handlers, runner headless de agy.exe
+│   └── preload.cjs         # Context bridge seguro para React
 ├── src/
-│   ├── App.jsx             # Interfaz completa: Chat, Panel, Locks y Mesh
-│   ├── main.jsx            # Punto de entrada de React 19
-│   └── index.css           # Estilos base y utilidades Tailwind CSS
-├── install-agy-desktop.cmd # Instalador 1-click para Windows
-├── install-agy-desktop.ps1 # Lógica PowerShell de instalación y accesos directos
-├── start-desktop.cmd       # Acceso rápido en desarrollo
-├── package.json
-└── README.md
+│   ├── App.jsx             # UI unificada: Chat In-App, Telemetría, Locks y Mesh
+│   ├── main.jsx            # Entry point React 19
+│   └── index.css           # Estilos Tailwind CSS
+├── scripts/
+│   └── pack-asar.cjs       # Empaquetado atómico de recursos en app.asar
+├── public/
+│   └── icon.ico            # Ícono nativo de la aplicación
+├── install-agy-desktop.cmd  # Lanzador de instalación rápida para Windows
+├── install-agy-desktop.ps1  # Script PowerShell de instalación y accesos directos
+├── start-desktop.cmd       # Acceso rápido de ejecución local
+└── package.json            # Configuración y scripts pnpm
 ```
+
+---
+
+## 🔒 Seguridad e Integración con `session-mesh`
+
+El plugin global `session-mesh` (`~/.gemini/config/plugins/session-mesh`) actúa como el guardián de concurrencia:
+- **Hook `PreToolUse`:** Intercepta cada llamada a `edit_file` o `write_file`. Si un archivo está bajo un lock activo de otra sesión viva, la operación es abortada automáticamente con un mensaje explicativo.
+- **Hook `SessionStart`:** Al abrir cualquier nueva sesión de terminal o interfaz, notifica inmediatamente qué otras sesiones están operando y qué recursos tienen reservados.
 
 ---
 
 ## 📄 Licencia
 
-Proyecto personal desarrollado por [yogui-dev](https://github.com/yogui-dev). Licencia MIT.
+MIT © [yogui-dev](https://github.com/yogui-dev)
