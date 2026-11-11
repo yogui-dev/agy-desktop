@@ -24,7 +24,15 @@ import {
   Bot,
   Trash2,
   History,
-  Sparkles
+  Sparkles,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
+  Paperclip,
+  Loader2,
+  Check,
+  X
 } from 'lucide-react';
 
 const STORAGE_KEY_CONVS = 'agy_desktop_conversations';
@@ -133,6 +141,17 @@ export default function App() {
       console.error('Error al persistir conversación en localStorage', e);
     }
   }, [chatMessages, activeConversationId]);
+
+  // Voice Recording & Audio State
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [speakingMessageId, setSpeakingMessageId] = useState(null);
+
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const recordingTimerRef = useRef(null);
+  const currentAudioElementRef = useRef(null);
 
   // Locks inputs
   const [lockPathInput, setLockPathInput] = useState('');
@@ -371,6 +390,148 @@ export default function App() {
       }
       return filtered;
     });
+  };
+
+  // Voice Recording & Audio Functions
+  const startRecording = async () => {
+    if (isRecording || isAgentRunning) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+
+      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        if (audioChunksRef.current.length === 0) return;
+
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        audioChunksRef.current = [];
+
+        setIsTranscribing(true);
+        try {
+          const arrayBuffer = await audioBlob.arrayBuffer();
+          const uint8Array = new Uint8Array(arrayBuffer);
+          const result = await window.agy.transcribeAudio(uint8Array, 'audio/webm');
+
+          if (result && result.text) {
+            setChatInput(prev => (prev ? prev + ' ' + result.text : result.text));
+          } else if (result && result.error) {
+            alert(`Error al transcribir: ${result.error}`);
+          }
+        } catch (err) {
+          console.error(err);
+          alert(`Error al procesar audio: ${err.message}`);
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+
+      mediaRecorder.start(250);
+      setIsRecording(true);
+      setRecordingSeconds(0);
+
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds(prev => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error(err);
+      alert(`No se pudo acceder al micrófono: ${err.message}`);
+    }
+  };
+
+  const stopRecording = () => {
+    if (!isRecording || !mediaRecorderRef.current) return;
+    clearInterval(recordingTimerRef.current);
+    setIsRecording(false);
+    if (mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  const cancelRecording = () => {
+    if (!isRecording || !mediaRecorderRef.current) return;
+    clearInterval(recordingTimerRef.current);
+    audioChunksRef.current = [];
+    if (mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stream?.getTracks().forEach(t => t.stop());
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+    setRecordingSeconds(0);
+  };
+
+  const handleAttachAudioFile = async () => {
+    if (isTranscribing || isAgentRunning || !window.agy) return;
+    setIsTranscribing(true);
+    try {
+      const res = await window.agy.selectAudioFile();
+      if (res && res.text) {
+        setChatInput(prev => {
+          const prefix = prev ? prev + '\n' : '';
+          return `${prefix}[Audio: ${res.fileName}]: "${res.text}"`;
+        });
+      } else if (res && res.error) {
+        alert(res.error);
+      }
+    } catch (err) {
+      alert(`Error al transcribir archivo: ${err.message}`);
+    } finally {
+      setIsTranscribing(false);
+    }
+  };
+
+  const handleSpeakMessage = async (msgId, text) => {
+    if (speakingMessageId === msgId) {
+      if (currentAudioElementRef.current) {
+        currentAudioElementRef.current.pause();
+        currentAudioElementRef.current = null;
+      }
+      setSpeakingMessageId(null);
+      return;
+    }
+
+    if (currentAudioElementRef.current) {
+      currentAudioElementRef.current.pause();
+      currentAudioElementRef.current = null;
+    }
+
+    setSpeakingMessageId(msgId);
+    try {
+      const res = await window.agy.speakText(text);
+      if (res && res.audioBase64) {
+        const audio = new Audio('data:audio/mp3;base64,' + res.audioBase64);
+        currentAudioElementRef.current = audio;
+        audio.onended = () => {
+          setSpeakingMessageId(null);
+          currentAudioElementRef.current = null;
+        };
+        audio.onerror = () => {
+          setSpeakingMessageId(null);
+          currentAudioElementRef.current = null;
+        };
+        audio.play();
+      } else {
+        setSpeakingMessageId(null);
+        if (res && res.error) console.error(res.error);
+      }
+    } catch (e) {
+      console.error(e);
+      setSpeakingMessageId(null);
+    }
+  };
+
+  const formatRecordingTime = (secs) => {
+    const m = Math.floor(secs / 60).toString().padStart(2, '0');
+    const s = (secs % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
   };
 
   const handleLock = async () => {
@@ -758,6 +919,33 @@ export default function App() {
                     )}
 
                     <div className="whitespace-pre-wrap font-sans">{msg.content}</div>
+
+                    {/* Speaker button on assistant message */}
+                    {msg.role === 'assistant' && msg.content && (
+                      <div className="mt-2.5 pt-2 border-t border-[#30363d]/60 flex items-center justify-between">
+                        <span className="text-[10px] text-gray-500 font-mono flex items-center gap-1">
+                          <Volume2 className="w-3 h-3 text-gray-500" />
+                          Voz Catalina (Chile)
+                        </span>
+                        <button
+                          onClick={() => handleSpeakMessage(msg.id, msg.content)}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#0d1117] hover:bg-[#21262d] text-gray-300 hover:text-blue-300 border border-[#30363d] transition cursor-pointer text-[11px]"
+                          title={speakingMessageId === msg.id ? "Detener reproducción" : "Escuchar respuesta en voz alta"}
+                        >
+                          {speakingMessageId === msg.id ? (
+                            <>
+                              <VolumeX className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
+                              <span className="text-blue-400 font-semibold text-[10px]">Detener</span>
+                            </>
+                          ) : (
+                            <>
+                              <Volume2 className="w-3.5 h-3.5 text-gray-400" />
+                              <span className="text-[10px]">Escuchar</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -807,40 +995,102 @@ export default function App() {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* In-App Chat Input Bar */}
-            <div className="p-4 border-t border-[#30363d] bg-[#161b22] flex items-center gap-3">
-              <textarea
-                rows={2}
-                placeholder="Escribe tu instrucción para el agente (ej. 'Revisa el archivo README' o 'Implementa una función')..."
-                value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    handleSendPrompt();
-                  }
-                }}
-                disabled={isAgentRunning}
-                className="flex-1 bg-[#0d1117] border border-[#30363d] rounded-xl p-3 text-xs text-white focus:outline-none focus:border-blue-500 font-mono resize-none"
-              />
+            {/* In-App Chat Input Bar with Microphone & Audio Upload */}
+            <div className="p-4 border-t border-[#30363d] bg-[#161b22]">
+              {isRecording ? (
+                // Dedicated Active Recording Bar
+                <div className="flex items-center justify-between bg-[#0d1117] border border-red-500/50 rounded-xl p-3.5 shadow-lg">
+                  <div className="flex items-center gap-3">
+                    <span className="w-3 h-3 rounded-full bg-red-500 animate-ping" />
+                    <span className="font-semibold text-xs text-red-400 tracking-wide">
+                      Grabando audio desde tu micrófono...
+                    </span>
+                    <span className="font-mono text-xs text-white px-2.5 py-0.5 bg-red-950/40 rounded border border-red-500/40">
+                      {formatRecordingTime(recordingSeconds)}
+                    </span>
+                  </div>
 
-              {isAgentRunning ? (
-                <button
-                  onClick={handleCancelTurn}
-                  className="px-5 py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-xs flex items-center gap-2 transition shadow-md"
-                >
-                  <StopCircle className="w-4 h-4" />
-                  Detener
-                </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={cancelRecording}
+                      className="px-3 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs flex items-center gap-1 transition cursor-pointer"
+                      title="Cancelar grabación"
+                    >
+                      <X className="w-3.5 h-3.5 text-red-400" />
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={stopRecording}
+                      className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1.5 transition shadow cursor-pointer"
+                      title="Terminar y transcribir con Whisper"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      Terminar y Entender
+                    </button>
+                  </div>
+                </div>
+              ) : isTranscribing ? (
+                // Transcribing status
+                <div className="flex items-center justify-center gap-3 bg-[#0d1117] border border-blue-500/40 rounded-xl p-4 text-xs text-blue-300">
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                  <span>Transcribiendo audio con Whisper (IA)...</span>
+                </div>
               ) : (
-                <button
-                  onClick={handleSendPrompt}
-                  disabled={!chatInput.trim()}
-                  className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-semibold text-xs flex items-center gap-2 transition shadow-md cursor-pointer"
-                >
-                  <Send className="w-4 h-4" />
-                  Ejecutar
-                </button>
+                // Standard Input Bar with Mic & Attachment buttons
+                <div className="flex items-center gap-2.5">
+                  <button
+                    onClick={handleAttachAudioFile}
+                    disabled={isAgentRunning}
+                    className="p-3 rounded-xl bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] text-gray-400 hover:text-white transition cursor-pointer disabled:opacity-50"
+                    title="Cargar y transcribir archivo de audio (.mp3, .wav, .m4a, .ogg)"
+                  >
+                    <Paperclip className="w-4 h-4" />
+                  </button>
+
+                  <button
+                    onClick={startRecording}
+                    disabled={isAgentRunning}
+                    className="p-3 rounded-xl bg-blue-600/15 hover:bg-blue-600/30 border border-blue-500/40 text-blue-400 hover:text-blue-200 transition cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                    title="Grabar nota de voz desde el micrófono"
+                  >
+                    <Mic className="w-4 h-4 text-blue-400" />
+                    <span className="text-[11px] font-semibold hidden sm:inline">Grabar</span>
+                  </button>
+
+                  <textarea
+                    rows={2}
+                    placeholder="Escribe tu instrucción o graba un audio con el micrófono..."
+                    value={chatInput}
+                    onChange={e => setChatInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSendPrompt();
+                      }
+                    }}
+                    disabled={isAgentRunning}
+                    className="flex-1 bg-[#0d1117] border border-[#30363d] rounded-xl p-3 text-xs text-white focus:outline-none focus:border-blue-500 font-mono resize-none"
+                  />
+
+                  {isAgentRunning ? (
+                    <button
+                      onClick={handleCancelTurn}
+                      className="px-5 py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-xs flex items-center gap-2 transition shadow-md"
+                    >
+                      <StopCircle className="w-4 h-4" />
+                      Detener
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleSendPrompt}
+                      disabled={!chatInput.trim()}
+                      className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-semibold text-xs flex items-center gap-2 transition shadow-md cursor-pointer"
+                    >
+                      <Send className="w-4 h-4" />
+                      Ejecutar
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </div>

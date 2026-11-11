@@ -30,6 +30,17 @@ Permite interactuar con los agentes de Antigravity en tiempo real, visualizar te
 - Envía mensajes reactivos directos (`send-message`) a otra sesión específica de la flota.
 - Difunde avisos globales (*broadcast*) para alertar a todos los agentes en ejecución.
 
+### 5. 🎙️ Interacción por Voz & Comprensión de Audio (Whisper & Catalina)
+- **Grabación Directa con Micrófono:** Graba instrucciones habladas desde el botón de micrófono en la barra de chat con temporizador en vivo y controles de cancelación/confirmación.
+- **Transcripción Inteligente con OpenAI Whisper:** Transcribe el audio en sub-segundos con sesgo de vocabulario especializado para términos de ingeniería (`Jorge`, `Yogui`, `Antigravity`, `CLI`, `Git`, `Electron`, etc.).
+- **Adjuntar y Transcribir Archivos de Audio:** Carga y transcribe archivos de audio existentes (`.mp3`, `.wav`, `.m4a`, `.ogg`, `.webm`, `.flac`).
+- **Lectura en Voz Alta (TTS):** Escucha las respuestas del asistente con la voz chilena oficial **Catalina Cálida** (`es-CL-CatalinaNeural`) mediante el botón de altavoz en cada mensaje.
+
+### 6. 💾 Historial Persistente & Gestión de Conversaciones
+- Guarda automáticamente cada conversación en almacenamiento local, sobreviviendo al cierre y reinicio de la aplicación.
+- Pestaña **Historial** en la barra lateral para navegar entre conversaciones previas, continuar chats anteriores o descartar los que ya no se necesiten.
+- Sincronización continua de IDs con Antigravity CLI para reanudar el contexto previo del agente.
+
 ---
 
 ## 🏗️ Arquitectura del Sistema

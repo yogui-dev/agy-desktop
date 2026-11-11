@@ -22,5 +22,10 @@ contextBridge.exposeInMainWorld('agy', {
     return () => ipcRenderer.removeListener('turn-finished', subscription);
   },
 
+  // Audio & Voice Processing
+  transcribeAudio: (audioBuffer, mimeType) => ipcRenderer.invoke('transcribe-audio', { audioBuffer, mimeType }),
+  selectAudioFile: () => ipcRenderer.invoke('select-audio-file'),
+  speakText: (text) => ipcRenderer.invoke('speak-text', { text }),
+
   isElectron: true
 });
