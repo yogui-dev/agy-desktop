@@ -32,5 +32,14 @@ contextBridge.exposeInMainWorld('agy', {
   getFileInfo: (filePath) => ipcRenderer.invoke('get-file-info', filePath),
   getPathForFile: (file) => (webUtils ? webUtils.getPathForFile(file) : (file.path || '')),
 
+  // Workspace Management
+  selectWorkspaceDir: () => ipcRenderer.invoke('select-workspace-dir'),
+  getCommonWorkspaces: () => ipcRenderer.invoke('get-common-workspaces'),
+
+  // Plugins & MCP
+  getMcpStatus: () => ipcRenderer.invoke('get-mcp-status'),
+  getPluginsStatus: () => ipcRenderer.invoke('get-plugins-status'),
+  showNotification: (title, body) => ipcRenderer.invoke('show-notification', { title, body }),
+
   isElectron: true
 });

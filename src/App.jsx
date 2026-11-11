@@ -36,11 +36,32 @@ import {
   File,
   FileText,
   Image as ImageIcon,
-  UploadCloud
+  UploadCloud,
+  Download,
+  FolderGit2,
+  Blocks,
+  Zap,
+  Shield,
+  TestTube2,
+  BookOpen,
+  Bug,
+  TerminalSquare
 } from 'lucide-react';
 
 const STORAGE_KEY_CONVS = 'agy_desktop_conversations';
 const STORAGE_KEY_ACTIVE_ID = 'agy_desktop_active_conv_id';
+const STORAGE_KEY_WORKSPACE = 'agy_desktop_workspace';
+
+const SLASH_COMMANDS = [
+  { cmd: '/brainstorming', desc: 'Explorar ideas, requerimientos y diseño antes de implementar', icon: Sparkles, category: 'Plan' },
+  { cmd: '/tdd-workflow', desc: 'Desarrollo guiado por pruebas (TDD) y cobertura estricta', icon: TestTube2, category: 'Código' },
+  { cmd: '/security-review', desc: 'Auditoría integral de vulnerabilidades, secrets y auth', icon: Shield, category: 'Seguridad' },
+  { cmd: '/codehealth', desc: 'Revisar salud del código, refactorización y deuda técnica', icon: Wrench, category: 'Calidad' },
+  { cmd: '/benchmark', desc: 'Medir tiempos de respuesta, rendimiento y latencia', icon: Zap, category: 'Performance' },
+  { cmd: '/explain', desc: 'Explicar detalladamente la arquitectura y funcionamiento', icon: BookOpen, category: 'Docs' },
+  { cmd: '/fix-defect', desc: 'Reproducir y corregir un bug con test de regresión', icon: Bug, category: 'Fix' },
+  { cmd: '/goal', desc: 'Ejecutar tarea a fondo hasta completarla al 100%', icon: TerminalSquare, category: 'Agent' }
+];
 
 function loadSavedConversations() {
   try {
@@ -102,6 +123,32 @@ export default function App() {
   const [streamingResponse, setStreamingResponse] = useState('');
   const [currentTools, setCurrentTools] = useState([]);
   const [showThinking, setShowThinking] = useState(true);
+
+  // Workspace & Project Manager
+  const [workspace, setWorkspace] = useState(() => {
+    return localStorage.getItem(STORAGE_KEY_WORKSPACE) || 'C:\\Proyectos\\yoguidev';
+  });
+  const [commonWorkspaces, setCommonWorkspaces] = useState([
+    { path: 'C:\\Proyectos\\yoguidev', name: 'yoguidev (Root)' }
+  ]);
+
+  // Slash Commands & Quick Prompts
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [slashFilter, setSlashFilter] = useState('');
+  const [selectedSlashIndex, setSelectedSlashIndex] = useState(0);
+
+  // MCP & Plugins Telemetry
+  const [mcpList, setMcpList] = useState([]);
+  const [pluginsList, setPluginsList] = useState([]);
+
+  // Usage / Quota Tracking Ref
+  const streamingUsageRef = useRef(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_WORKSPACE, workspace);
+    } catch (e) {}
+  }, [workspace]);
 
   // Keep activeConversationId synchronized in a ref
   const activeConversationIdRef = useRef(activeConversationId);
@@ -211,6 +258,20 @@ export default function App() {
         }
       });
 
+      if (window.agy.getCommonWorkspaces) {
+        window.agy.getCommonWorkspaces().then(w => {
+          if (w && w.length) setCommonWorkspaces(w);
+        });
+      }
+
+      if (window.agy.getMcpStatus) {
+        window.agy.getMcpStatus().then(m => setMcpList(m || []));
+      }
+
+      if (window.agy.getPluginsStatus) {
+        window.agy.getPluginsStatus().then(p => setPluginsList(p || []));
+      }
+
       // Listen for streaming events from background agy process (mounted once)
       const unsubStream = window.agy.onStreamEvent(event => {
         if (!event) return;
@@ -264,11 +325,18 @@ export default function App() {
           }
         }
 
+        if (event.event === 'step_update' && event.step_update && event.step_update.usage) {
+          streamingUsageRef.current = event.step_update.usage;
+        }
+
         if (event.event === 'result' && event.result) {
           const finalResp = event.result.response || '';
           if (finalResp) {
             streamingResponseRef.current = finalResp;
             setStreamingResponse(finalResp);
+          }
+          if (event.result.usage) {
+            streamingUsageRef.current = event.result.usage;
           }
         }
       });
@@ -278,6 +346,7 @@ export default function App() {
         const finalContent = streamingResponseRef.current || '(Turno finalizado sin respuesta de texto)';
         const finalTools = [...currentToolsRef.current];
         const finalThought = streamingThoughtRef.current;
+        const finalUsage = streamingUsageRef.current;
 
         setChatMessages(prev => [
           ...prev,
@@ -286,12 +355,14 @@ export default function App() {
             role: 'assistant',
             content: finalContent,
             tools: finalTools,
-            thinking: finalThought
+            thinking: finalThought,
+            usage: finalUsage
           }
         ]);
         streamingResponseRef.current = '';
         streamingThoughtRef.current = '';
         currentToolsRef.current = [];
+        streamingUsageRef.current = null;
         setStreamingResponse('');
         setStreamingThought('');
         setCurrentTools([]);
@@ -356,8 +427,67 @@ export default function App() {
       prompt: fullPrompt,
       model: selectedModel,
       conversationId: activeConversationId || undefined,
-      workspace: 'C:\\Proyectos\\yoguidev'
+      workspace: workspace || 'C:\\Proyectos\\yoguidev'
     });
+  };
+
+  const handleBrowseWorkspace = async () => {
+    if (!window.agy || !window.agy.selectWorkspaceDir) return;
+    const selected = await window.agy.selectWorkspaceDir();
+    if (selected) {
+      setWorkspace(selected);
+      setCommonWorkspaces(prev => {
+        if (prev.some(w => w.path === selected)) return prev;
+        const name = selected.split(/[\\/]/).pop() || selected;
+        return [...prev, { path: selected, name }];
+      });
+    }
+  };
+
+  const exportChatToMarkdown = () => {
+    if (chatMessages.length === 0) return;
+    let md = `# 🛸 Transcripción de Sesión — AGY Desktop\n\n`;
+    md += `- **Fecha:** ${new Date().toLocaleString()}\n`;
+    md += `- **Modelo:** \`${selectedModel}\`\n`;
+    md += `- **Workspace:** \`${workspace}\`\n`;
+    if (activeConversationId) md += `- **ID Conversación:** \`${activeConversationId}\`\n`;
+    md += `\n---\n\n`;
+
+    chatMessages.forEach(msg => {
+      const roleName = msg.role === 'user' ? '👤 Usuario' : '🤖 Agente Antigravity';
+      md += `### ${roleName}\n\n`;
+      if (msg.attachments && msg.attachments.length > 0) {
+        md += `**Archivos adjuntos:**\n`;
+        msg.attachments.forEach(a => {
+          md += `- [${a.name}](${a.path}) (${formatFileSize(a.size)})\n`;
+        });
+        md += `\n`;
+      }
+      if (msg.tools && msg.tools.length > 0) {
+        md += `> 🔧 **Herramientas ejecutadas:** ${msg.tools.map(t => t.name).join(', ')}\n\n`;
+      }
+      md += `${msg.content}\n\n`;
+      if (msg.usage) {
+        md += `> 📊 *Tokens: ${msg.usage.total_tokens?.toLocaleString() || 'N/A'} (Input: ${msg.usage.input_tokens}, Output: ${msg.usage.output_tokens}, Thinking: ${msg.usage.thinking_tokens || 0})*\n\n`;
+      }
+    });
+
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `agy-conversacion-${(activeConversationId || 'chat').slice(0, 8)}-${Date.now()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleSelectSlashCommand = (cmd) => {
+    setChatInput(`${cmd} `);
+    setShowSlashMenu(false);
+  };
+
+  const handleQuickPrompt = (promptText) => {
+    setChatInput(prev => (prev ? prev + ' ' + promptText : promptText));
   };
 
   const handleCancelTurn = async () => {
@@ -700,7 +830,7 @@ export default function App() {
           </div>
 
           {/* Navigation Tabs */}
-          <div className="p-2 border-b border-[#30363d] grid grid-cols-4 gap-1">
+          <div className="p-2 border-b border-[#30363d] grid grid-cols-5 gap-1">
             <button
               onClick={() => setActiveTab('chat')}
               className={`py-1.5 text-xs rounded-md font-medium flex items-center justify-center gap-1 transition ${
@@ -736,6 +866,15 @@ export default function App() {
             >
               <Radio className="w-3.5 h-3.5" />
               Mesh
+            </button>
+            <button
+              onClick={() => setActiveTab('mcp')}
+              className={`py-1.5 text-xs rounded-md font-medium flex items-center justify-center gap-1 transition ${
+                activeTab === 'mcp' ? 'bg-[#21262d] text-white shadow' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              <Blocks className="w-3.5 h-3.5" />
+              MCP
             </button>
           </div>
 
@@ -942,17 +1081,55 @@ export default function App() {
       <main className="flex-1 flex flex-col bg-[#0d1117] overflow-hidden">
         {/* Top Navbar */}
         <header className="h-14 border-b border-[#30363d] bg-[#161b22] px-6 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4">
             <span className="text-sm font-semibold text-white">
               {activeTab === 'chat' && 'Agente Interactivo In-App (Sin Terminales Externas)'}
               {activeTab === 'dashboard' && 'Panel de Sesiones & Telemetría en Vivo'}
               {activeTab === 'locks' && 'Gestor de Bloqueos de Rutas (Path Locks)'}
               {activeTab === 'mesh' && 'Tablón de Mensajes Inter-Agente'}
+              {activeTab === 'mcp' && 'Ecosistema de MCPs & Herramientas Instaladas'}
             </span>
+
+            {/* Workspace / Project Selector */}
+            <div className="hidden lg:flex items-center gap-1.5 bg-[#0d1117] border border-[#30363d] rounded-lg px-2 py-1">
+              <FolderGit2 className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
+              <select
+                value={workspace}
+                onChange={e => setWorkspace(e.target.value)}
+                disabled={isAgentRunning}
+                className="bg-transparent text-xs text-gray-200 focus:outline-none font-mono cursor-pointer max-w-[200px] truncate"
+                title={`Workspace actual: ${workspace}`}
+              >
+                {commonWorkspaces.map(w => (
+                  <option key={w.path} value={w.path} className="bg-[#161b22] text-gray-200">
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={handleBrowseWorkspace}
+                disabled={isAgentRunning}
+                className="text-gray-400 hover:text-white p-0.5 rounded transition cursor-pointer disabled:opacity-50"
+                title="Elegir otra carpeta de proyecto..."
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
-          {/* Model Selector & Status */}
-          <div className="flex items-center gap-3">
+          {/* Action Buttons, Model Selector & Conv Status */}
+          <div className="flex items-center gap-2.5">
+            {activeTab === 'chat' && chatMessages.length > 0 && (
+              <button
+                onClick={exportChatToMarkdown}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg bg-[#21262d] hover:bg-[#30363d] text-emerald-300 hover:text-emerald-200 border border-emerald-500/30 transition cursor-pointer shadow-sm"
+                title="Exportar conversación completa a Markdown (.md)"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-400" />
+                Exportar MD
+              </button>
+            )}
+
             <button
               onClick={handleNewConversation}
               disabled={isAgentRunning}
@@ -983,7 +1160,7 @@ export default function App() {
               )}
             </select>
             {activeConversationId && (
-              <span className="text-[11px] text-gray-400 font-mono bg-[#0d1117] px-2 py-1 rounded border border-[#30363d]">
+              <span className="text-[11px] text-gray-400 font-mono bg-[#0d1117] px-2 py-1 rounded border border-[#30363d] hidden sm:inline">
                 Conv: {activeConversationId.slice(0, 8)}...
               </span>
             )}
@@ -1080,30 +1257,45 @@ export default function App() {
 
                     <div className="whitespace-pre-wrap font-sans">{msg.content}</div>
 
-                    {/* Speaker button on assistant message */}
-                    {msg.role === 'assistant' && msg.content && (
-                      <div className="mt-2.5 pt-2 border-t border-[#30363d]/60 flex items-center justify-between">
-                        <span className="text-[10px] text-gray-500 font-mono flex items-center gap-1">
-                          <Volume2 className="w-3 h-3 text-gray-500" />
-                          Voz Catalina (Chile)
-                        </span>
-                        <button
-                          onClick={() => handleSpeakMessage(msg.id, msg.content)}
-                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#0d1117] hover:bg-[#21262d] text-gray-300 hover:text-blue-300 border border-[#30363d] transition cursor-pointer text-[11px]"
-                          title={speakingMessageId === msg.id ? "Detener reproducción" : "Escuchar respuesta en voz alta"}
-                        >
-                          {speakingMessageId === msg.id ? (
-                            <>
-                              <VolumeX className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
-                              <span className="text-blue-400 font-semibold text-[10px]">Detener</span>
-                            </>
-                          ) : (
-                            <>
-                              <Volume2 className="w-3.5 h-3.5 text-gray-400" />
-                              <span className="text-[10px]">Escuchar</span>
-                            </>
+                    {/* Footer on assistant message: Usage stats & Speaker button */}
+                    {msg.role === 'assistant' && (
+                      <div className="mt-2.5 pt-2 border-t border-[#30363d]/60 flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-3">
+                          {msg.usage && (
+                            <span
+                              className="text-[10px] text-blue-300 font-mono flex items-center gap-1 bg-blue-950/40 px-2 py-0.5 rounded border border-blue-500/30"
+                              title={`Tokens: ${msg.usage.input_tokens} input, ${msg.usage.output_tokens} output, ${msg.usage.thinking_tokens || 0} thinking`}
+                            >
+                              <Zap className="w-3 h-3 text-amber-400" />
+                              {(msg.usage.total_tokens || (msg.usage.input_tokens + msg.usage.output_tokens)).toLocaleString()} tokens
+                              {msg.usage.thinking_tokens > 0 && ` (${msg.usage.thinking_tokens} thk)`}
+                            </span>
                           )}
-                        </button>
+                          <span className="text-[10px] text-gray-500 font-mono flex items-center gap-1">
+                            <Volume2 className="w-3 h-3 text-gray-500" />
+                            Catalina
+                          </span>
+                        </div>
+
+                        {msg.content && (
+                          <button
+                            onClick={() => handleSpeakMessage(msg.id, msg.content)}
+                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#0d1117] hover:bg-[#21262d] text-gray-300 hover:text-blue-300 border border-[#30363d] transition cursor-pointer text-[11px]"
+                            title={speakingMessageId === msg.id ? "Detener reproducción" : "Escuchar respuesta en voz alta"}
+                          >
+                            {speakingMessageId === msg.id ? (
+                              <>
+                                <VolumeX className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
+                                <span className="text-blue-400 font-semibold text-[10px]">Detener</span>
+                              </>
+                            ) : (
+                              <>
+                                <Volume2 className="w-3.5 h-3.5 text-gray-400" />
+                                <span className="text-[10px]">Escuchar</span>
+                              </>
+                            )}
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1188,6 +1380,61 @@ export default function App() {
                   >
                     + Agregar más
                   </button>
+                </div>
+              )}
+
+              {/* Quick Action Pills (when input is empty) */}
+              {!chatInput.trim() && attachedFiles.length === 0 && !isRecording && (
+                <div className="mb-2 flex items-center gap-1.5 overflow-x-auto pb-1 text-xs no-scrollbar">
+                  <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1 mr-1 flex-shrink-0">
+                    <Sparkles className="w-3 h-3 text-amber-400" />
+                    Atajos rápidos:
+                  </span>
+                  {SLASH_COMMANDS.slice(0, 6).map(cmd => (
+                    <button
+                      key={cmd.cmd}
+                      onClick={() => handleSelectSlashCommand(cmd.cmd)}
+                      className="flex-shrink-0 px-2.5 py-1 rounded-lg bg-[#0d1117] hover:bg-[#21262d] border border-[#30363d] hover:border-blue-500/50 text-[11px] text-gray-300 hover:text-white transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                      title={cmd.desc}
+                    >
+                      <cmd.icon className="w-3 h-3 text-blue-400" />
+                      <span className="font-mono text-[10px] text-blue-300 font-semibold">{cmd.cmd}</span>
+                      <span className="text-[10px] text-gray-400 hidden xl:inline font-sans">{cmd.desc.slice(0, 28)}...</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Slash Command Autocomplete Popover (when input starts with /) */}
+              {chatInput.startsWith('/') && !chatInput.includes(' ') && (
+                <div className="mb-2 p-2 rounded-xl bg-[#0d1117] border border-blue-500/40 shadow-xl max-h-56 overflow-y-auto space-y-1 animate-fade-in">
+                  <div className="px-2 py-1 flex items-center justify-between text-[10px] text-gray-400 font-mono border-b border-[#30363d] mb-1">
+                    <span className="flex items-center gap-1 text-blue-300 font-semibold">
+                      <TerminalSquare className="w-3 h-3 text-blue-400" />
+                      Comandos y Skills Disponibles
+                    </span>
+                    <span>Presiona click o Enter para elegir</span>
+                  </div>
+                  {SLASH_COMMANDS.filter(c => c.cmd.toLowerCase().includes(chatInput.toLowerCase())).map(cmd => (
+                    <div
+                      key={cmd.cmd}
+                      onClick={() => handleSelectSlashCommand(cmd.cmd)}
+                      className="p-2 rounded-lg hover:bg-[#161b22] border border-transparent hover:border-[#30363d] cursor-pointer flex items-center justify-between transition"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-1.5 rounded bg-blue-600/20 text-blue-400">
+                          <cmd.icon className="w-3.5 h-3.5" />
+                        </div>
+                        <div>
+                          <span className="font-mono text-xs font-bold text-white">{cmd.cmd}</span>
+                          <p className="text-[11px] text-gray-400 font-sans">{cmd.desc}</p>
+                        </div>
+                      </div>
+                      <span className="text-[9px] uppercase font-mono px-2 py-0.5 rounded bg-[#21262d] text-gray-300 border border-[#30363d]">
+                        {cmd.category}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -1475,6 +1722,169 @@ export default function App() {
                   <Radio className="w-3.5 h-3.5 text-amber-400" />
                   Broadcast
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB: MCP & PLUGINS ECOSYSTEM */}
+        {activeTab === 'mcp' && (
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            {/* Header info */}
+            <div className="bg-[#161b22] border border-[#30363d] rounded-xl p-5 shadow flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <Blocks className="w-5 h-5 text-blue-400" />
+                  Ecosistema de Extensiones, MCPs y Plugins
+                </h3>
+                <p className="text-xs text-gray-400 mt-1">
+                  Herramientas integradas en el motor Antigravity CLI para interacción con bases de datos, APIs y coordinación.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-1 rounded-md bg-blue-950/40 text-blue-300 border border-blue-500/30 text-xs font-mono">
+                  {mcpList.length} MCPs detectados
+                </span>
+                <span className="px-2.5 py-1 rounded-md bg-purple-950/40 text-purple-300 border border-purple-500/30 text-xs font-mono">
+                  {pluginsList.length} Plugins instalados
+                </span>
+              </div>
+            </div>
+
+            {/* MCP Servers Grid */}
+            <div className="bg-[#161b22] border border-[#30363d] rounded-xl p-5 shadow">
+              <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-emerald-400" />
+                Servidores MCP Activos (Model Context Protocol)
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="p-3.5 rounded-lg bg-[#0d1117] border border-[#30363d] flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                      <span className="font-mono text-xs font-bold text-white">Neon</span>
+                      <span className="text-[10px] text-gray-400 px-1.5 py-0.5 rounded bg-[#21262d]">PostgreSQL Cloud</span>
+                    </div>
+                    <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">
+                      Gestión de bases de datos serverless Neon (`proud-heart-14474254`), queries SQL, migraciones y branches.
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2 py-0.5 rounded">
+                    CONECTADO
+                  </span>
+                </div>
+
+                <div className="p-3.5 rounded-lg bg-[#0d1117] border border-[#30363d] flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                      <span className="font-mono text-xs font-bold text-white">Stitch</span>
+                      <span className="text-[10px] text-gray-400 px-1.5 py-0.5 rounded bg-[#21262d]">Design & UI</span>
+                    </div>
+                    <p className="text-[11px] text-gray-400 mt-1.5 leading-relaxed">
+                      Generación de pantallas, diseño de interfaces visuales, variantes y sistemas de diseño React/Tailwind.
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/40 border border-emerald-500/30 px-2 py-0.5 rounded">
+                    CONECTADO
+                  </span>
+                </div>
+
+                {mcpList.map((mcp, idx) => (
+                  <div key={idx} className="p-3.5 rounded-lg bg-[#0d1117] border border-[#30363d] flex items-start justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-blue-400" />
+                        <span className="font-mono text-xs font-bold text-white">{mcp}</span>
+                      </div>
+                      <p className="text-[11px] text-gray-400 mt-1 font-mono">Herramienta descubierta por Antigravity CLI</p>
+                    </div>
+                    <span className="text-[10px] font-mono text-blue-400 bg-blue-950/40 border border-blue-500/30 px-2 py-0.5 rounded">
+                      DISPONIBLE
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Plugins Grid */}
+            <div className="bg-[#161b22] border border-[#30363d] rounded-xl p-5 shadow">
+              <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+                <Wrench className="w-4 h-4 text-purple-400" />
+                Plugins & Extensiones CLI Instaladas
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="p-3 rounded-lg bg-[#0d1117] border border-[#30363d]">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-mono text-xs font-bold text-purple-300">session-mesh</span>
+                    <span className="text-[9px] text-emerald-400 font-mono">ACTIVO</span>
+                  </div>
+                  <p className="text-[11px] text-gray-400 leading-relaxed">
+                    Telemetría en tiempo real, guardián de bloqueos y coordinación multi-agente en el workspace.
+                  </p>
+                </div>
+
+                <div className="p-3 rounded-lg bg-[#0d1117] border border-[#30363d]">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-mono text-xs font-bold text-purple-300">superpowers</span>
+                    <span className="text-[9px] text-emerald-400 font-mono">ACTIVO</span>
+                  </div>
+                  <p className="text-[11px] text-gray-400 leading-relaxed">
+                    Framework de subagentes, TDD workflow, auditoría sistemática y arquitectura modular.
+                  </p>
+                </div>
+
+                <div className="p-3 rounded-lg bg-[#0d1117] border border-[#30363d]">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-mono text-xs font-bold text-purple-300">ecc</span>
+                    <span className="text-[9px] text-emerald-400 font-mono">ACTIVO</span>
+                  </div>
+                  <p className="text-[11px] text-gray-400 leading-relaxed">
+                    Everything Claude Code suite de agentes especializados y catálogo de skills de ingeniería.
+                  </p>
+                </div>
+
+                {pluginsList.map((p, idx) => (
+                  <div key={idx} className="p-3 rounded-lg bg-[#0d1117] border border-[#30363d]">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-mono text-xs font-bold text-white">{p}</span>
+                      <span className="text-[9px] text-blue-400 font-mono">INSTALADO</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Quick Skills Catalog */}
+            <div className="bg-[#161b22] border border-[#30363d] rounded-xl p-5 shadow">
+              <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-400" />
+                Catálogo de Slash Commands & Skills
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                {SLASH_COMMANDS.map(cmd => (
+                  <div
+                    key={cmd.cmd}
+                    onClick={() => {
+                      handleSelectSlashCommand(cmd.cmd);
+                      setActiveTab('chat');
+                    }}
+                    className="p-3 rounded-lg bg-[#0d1117] border border-[#30363d] hover:border-blue-500/50 cursor-pointer transition group"
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-1.5 text-blue-400 group-hover:text-blue-300">
+                        <cmd.icon className="w-3.5 h-3.5" />
+                        <span className="font-mono text-xs font-bold">{cmd.cmd}</span>
+                      </div>
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#21262d] text-gray-400 font-mono">
+                        {cmd.category}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-gray-400 group-hover:text-gray-300 leading-snug">
+                      {cmd.desc}
+                    </p>
+                  </div>
+                ))}
               </div>
             </div>
           </div>

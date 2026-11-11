@@ -47,6 +47,41 @@ Permite interactuar con los agentes de Antigravity en tiempo real, visualizar te
 - Pestaña **Historial** en la barra lateral para navegar entre conversaciones previas, continuar chats anteriores o descartar los que ya no se necesiten.
 - Sincronización continua de IDs con Antigravity CLI para reanudar el contexto previo del agente.
 
+### 8. 📂 Selector Dinámico de Workspace & Proyectos
+- Selector directo en la cabecera superior para conmutar entre diferentes carpetas de proyectos del workspace (`C:\Proyectos\yoguidev`, subproyectos o cualquier directorio del equipo).
+- Botón de exploración para abrir el selector nativo de carpetas de Windows y cargar cualquier repositorio al vuelo sin reiniciar la aplicación.
+
+### 9. ⚡ Slash Commands (`/`) & Atajos Rápidos
+- Popover inteligente de autocompletado al escribir `/` en la barra de chat con filtrado en vivo de skills especializadas:
+  - `/brainstorming`: Explorar ideas, requerimientos y diseño antes de implementar.
+  - `/tdd-workflow`: Desarrollo guiado por pruebas (TDD) y cobertura estricta.
+  - `/security-review`: Auditoría integral de vulnerabilidades, secrets y auth.
+  - `/codehealth`: Revisar salud de código, refactorización y deuda técnica.
+  - `/benchmark`: Medir tiempos de respuesta, rendimiento y latencia.
+  - `/explain`: Explicar detalladamente la arquitectura y funcionamiento.
+  - `/fix-defect`: Reproducir y corregir un bug con test de regresión.
+  - `/goal`: Ejecutar tarea a fondo hasta completarla al 100%.
+- Píldoras de acceso rápido sobre la barra de entrada cuando el campo está vacío para invocar comandos con un solo click.
+
+### 10. 🛸 Segundo Plano, Bandeja del Sistema (Tray) & Atajo Global
+- **Minimización a la Bandeja:** Al cerrar la ventana, la aplicación continúa ejecutándose en segundo plano en el System Tray de Windows.
+- **Atajo Global:** Presiona `Ctrl + Shift + Espacio` (o `Cmd + Shift + Space`) desde cualquier parte del sistema operativo para mostrar u ocultar la ventana al instante.
+- **Notificaciones Nativas:** Avisos de Windows cuando el agente completa un turno en segundo plano o con la ventana desenfocada.
+
+### 11. 📊 Métricas de Consumo de Tokens & Quota Tracking
+- Inspección en tiempo real de los tokens procesados en cada turno mediante el stream NDJSON del agente:
+  - Tokens totales acumulados.
+  - Tokens de entrada (*input*), salida (*output*) y pensamiento (*thinking tokens*).
+  - Badge interactivo con ícono de energía (`⚡`) en el pie de cada respuesta del asistente.
+
+### 12. 📥 Exportación Limpia a Markdown (`.md`)
+- Botón **Exportar MD** en la barra superior para descargar la transcripción estructurada del chat con un solo click.
+- Incluye metadata de fecha, modelo utilizado, workspace, archivos adjuntos analizados, herramientas ejecutadas y estadísticas de tokens.
+
+### 13. 🧩 Visor de MCPs & Plugins
+- Pestaña dedicada **MCP** en la navegación lateral que inspecciona los servidores Model Context Protocol configurados (Neon, Stitch, etc.) y los plugins CLI activos (`session-mesh`, `superpowers`, `ecc`).
+- Catálogo interactivo de skills disponibles con enlace directo al chat.
+
 ---
 
 ## 🏗️ Arquitectura del Sistema

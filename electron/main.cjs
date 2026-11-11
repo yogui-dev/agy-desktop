@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Tray, Menu, globalShortcut, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -10,6 +10,8 @@ const AGY_BIN = path.join(process.env.LOCALAPPDATA || '', 'agy', 'bin', 'agy.exe
 
 let mainWindow = null;
 let activeAgentProcess = null;
+let tray = null;
+let isQuitting = false;
 
 // Helper: Run session-mesh CLI command safely
 function runMeshCommand(command, args = []) {
@@ -232,6 +234,86 @@ ipcMain.handle('get-file-info', async (_, filePath) => {
   }
 });
 
+// Workspace & Project Management Handlers
+ipcMain.handle('select-workspace-dir', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Seleccionar Carpeta de Workspace / Proyecto',
+    properties: ['openDirectory']
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+});
+
+ipcMain.handle('get-common-workspaces', async () => {
+  const baseDir = 'C:\\Proyectos\\yoguidev';
+  const workspaces = [{ path: baseDir, name: 'yoguidev (Root)' }];
+  try {
+    if (fs.existsSync(baseDir)) {
+      const items = fs.readdirSync(baseDir, { withFileTypes: true });
+      for (const item of items) {
+        if (item.isDirectory() && !item.name.startsWith('.') && item.name !== 'node_modules') {
+          workspaces.push({
+            path: path.join(baseDir, item.name),
+            name: item.name
+          });
+        }
+      }
+    }
+  } catch (e) {}
+  return workspaces;
+});
+
+// MCP & Plugins Inspection
+ipcMain.handle('get-mcp-status', async () => {
+  const agyMcpList = [];
+  if (fs.existsSync(AGY_BIN)) {
+    try {
+      const stdout = execFileSync(AGY_BIN, ['mcp', 'list'], {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 5000
+      });
+      stdout.split('\n').forEach(line => {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('Available') && !trimmed.startsWith('---')) {
+          agyMcpList.push(trimmed);
+        }
+      });
+    } catch (e) {}
+  }
+  return agyMcpList;
+});
+
+ipcMain.handle('get-plugins-status', async () => {
+  const plugins = [];
+  if (fs.existsSync(AGY_BIN)) {
+    try {
+      const stdout = execFileSync(AGY_BIN, ['plugins', 'list'], {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 5000
+      });
+      stdout.split('\n').forEach(line => {
+        const trimmed = line.trim();
+        if (trimmed) plugins.push(trimmed);
+      });
+    } catch (e) {}
+  }
+  return plugins;
+});
+
+ipcMain.handle('show-notification', async (_, { title, body }) => {
+  if (Notification.isSupported()) {
+    new Notification({
+      title: title || 'AGY Desktop',
+      body: body || '',
+      icon: path.join(__dirname, '..', 'public', 'icon.ico')
+    }).show();
+    return true;
+  }
+  return false;
+});
+
 // IPC Handler: Embedded In-App Turn Execution (Zero External Windows)
 ipcMain.handle('start-turn', async (event, { prompt, model, conversationId, workspace }) => {
   if (!fs.existsSync(AGY_BIN)) return { error: 'agy.exe no encontrado en el sistema' };
@@ -291,6 +373,15 @@ ipcMain.handle('start-turn', async (event, { prompt, model, conversationId, work
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('turn-finished', { code });
       }
+      if (Notification.isSupported() && (!mainWindow || !mainWindow.isFocused() || !mainWindow.isVisible())) {
+        try {
+          new Notification({
+            title: '🛸 AGY Desktop',
+            body: code === 0 ? 'Turno completado exitosamente.' : 'El turno terminó con advertencias o errores.',
+            icon: path.join(__dirname, '..', 'public', 'icon.ico')
+          }).show();
+        } catch (e) {}
+      }
     });
 
     activeAgentProcess.on('error', err => {
@@ -321,6 +412,53 @@ ipcMain.handle('cancel-turn', async () => {
   return { success: true };
 });
 
+function createTray() {
+  const iconPath = path.join(__dirname, '..', 'public', 'icon.ico');
+  if (!fs.existsSync(iconPath)) return;
+  try {
+    tray = new Tray(iconPath);
+    const contextMenu = Menu.buildFromTemplate([
+      {
+        label: 'Abrir AGY Desktop',
+        click: () => {
+          if (mainWindow) {
+            mainWindow.show();
+            mainWindow.focus();
+          }
+        }
+      },
+      {
+        label: 'Ocultar a la bandeja',
+        click: () => {
+          if (mainWindow) mainWindow.hide();
+        }
+      },
+      { type: 'separator' },
+      {
+        label: 'Salir completamente',
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        }
+      }
+    ]);
+    tray.setToolTip('AGY Desktop — Control Plane (Ctrl+Shift+Espacio)');
+    tray.setContextMenu(contextMenu);
+    tray.on('double-click', () => {
+      if (mainWindow) {
+        if (mainWindow.isVisible()) {
+          mainWindow.hide();
+        } else {
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      }
+    });
+  } catch (err) {
+    console.error('Tray creation error:', err);
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1300,
@@ -344,16 +482,54 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
+
+  mainWindow.on('close', (e) => {
+    if (!isQuitting) {
+      e.preventDefault();
+      mainWindow.hide();
+      if (Notification.isSupported()) {
+        try {
+          new Notification({
+            title: '🛸 AGY Desktop en segundo plano',
+            body: 'La aplicación sigue activa en la bandeja del sistema. Presiona Ctrl+Shift+Espacio para abrirla.',
+            icon: path.join(__dirname, '..', 'public', 'icon.ico')
+          }).show();
+        } catch (err) {}
+      }
+    }
+  });
 }
 
 app.whenReady().then(() => {
   createWindow();
+  createTray();
+
+  try {
+    globalShortcut.register('CommandOrControl+Shift+Space', () => {
+      if (mainWindow) {
+        if (mainWindow.isVisible() && mainWindow.isFocused()) {
+          mainWindow.hide();
+        } else {
+          mainWindow.show();
+          mainWindow.focus();
+        }
+      }
+    });
+  } catch (e) {
+    console.error('Failed to register global shortcut:', e);
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+});
+
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (process.platform !== 'darwin') {
+    if (isQuitting) app.quit();
+  }
 });
