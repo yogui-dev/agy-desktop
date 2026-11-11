@@ -1,8 +1,22 @@
-const { app, BrowserWindow, ipcMain, dialog, Tray, Menu, globalShortcut, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Tray, Menu, globalShortcut, Notification, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { execFileSync, spawn } = require('child_process');
+
+// Single instance lock to prevent duplicate background instances
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (!mainWindow.isVisible()) mainWindow.show();
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
 
 const USER_HOME = process.env.USERPROFILE || process.env.HOME || '';
 const SESSION_MESH_SCRIPT = path.join(USER_HOME, '.gemini', 'config', 'plugins', 'session-mesh', 'scripts', 'session-mesh.cjs');
@@ -12,6 +26,14 @@ let mainWindow = null;
 let activeAgentProcess = null;
 let tray = null;
 let isQuitting = false;
+
+function getAppIcon() {
+  const iconPath = path.join(__dirname, '..', 'public', 'icon.ico');
+  if (fs.existsSync(iconPath)) {
+    return nativeImage.createFromPath(iconPath);
+  }
+  return null;
+}
 
 // Helper: Run session-mesh CLI command safely
 function runMeshCommand(command, args = []) {
@@ -413,10 +435,10 @@ ipcMain.handle('cancel-turn', async () => {
 });
 
 function createTray() {
-  const iconPath = path.join(__dirname, '..', 'public', 'icon.ico');
-  if (!fs.existsSync(iconPath)) return;
   try {
-    tray = new Tray(iconPath);
+    const icon = getAppIcon();
+    if (!icon || icon.isEmpty()) return;
+    tray = new Tray(icon);
     const contextMenu = Menu.buildFromTemplate([
       {
         label: 'Abrir AGY Desktop',
@@ -460,13 +482,14 @@ function createTray() {
 }
 
 function createWindow() {
+  const appIcon = getAppIcon();
   mainWindow = new BrowserWindow({
     width: 1300,
     height: 840,
     minWidth: 960,
     minHeight: 640,
     backgroundColor: '#0d1117',
-    icon: path.join(__dirname, '..', 'public', 'icon.ico'),
+    icon: (appIcon && !appIcon.isEmpty()) ? appIcon : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
@@ -476,6 +499,23 @@ function createWindow() {
     title: 'AGY Desktop — Control Plane'
   });
 
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    console.log(`[Renderer Console] [Level ${level}] ${message} (${sourceId}:${line})`);
+  });
+  mainWindow.webContents.on('render-process-gone', (event, detailed) => {
+    console.error('Render process gone:', detailed);
+  });
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error('Failed to load:', errorCode, errorDescription);
+  });
+
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'F12' && input.type === 'keyDown') {
+      mainWindow.webContents.toggleDevTools();
+      event.preventDefault();
+    }
+  });
+
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   if (devUrl) {
     mainWindow.loadURL(devUrl);
@@ -483,20 +523,8 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 
-  mainWindow.on('close', (e) => {
-    if (!isQuitting) {
-      e.preventDefault();
-      mainWindow.hide();
-      if (Notification.isSupported()) {
-        try {
-          new Notification({
-            title: '🛸 AGY Desktop en segundo plano',
-            body: 'La aplicación sigue activa en la bandeja del sistema. Presiona Ctrl+Shift+Espacio para abrirla.',
-            icon: path.join(__dirname, '..', 'public', 'icon.ico')
-          }).show();
-        } catch (err) {}
-      }
-    }
+  mainWindow.on('closed', () => {
+    mainWindow = null;
   });
 }
 
@@ -530,6 +558,6 @@ app.on('will-quit', () => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    if (isQuitting) app.quit();
+    app.quit();
   }
 });

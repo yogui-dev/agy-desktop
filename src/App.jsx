@@ -39,6 +39,7 @@ import {
   UploadCloud,
   Download,
   FolderGit2,
+  FolderOpen,
   Blocks,
   Zap,
   Shield,
