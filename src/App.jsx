@@ -21,8 +21,24 @@ import {
   Wrench,
   ChevronDown,
   ChevronRight,
-  Bot
+  Bot,
+  Trash2,
+  History,
+  Sparkles
 } from 'lucide-react';
+
+const STORAGE_KEY_CONVS = 'agy_desktop_conversations';
+const STORAGE_KEY_ACTIVE_ID = 'agy_desktop_active_conv_id';
+
+function loadSavedConversations() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CONVS);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {
+    console.error('Error loading conversations from localStorage', e);
+  }
+  return [];
+}
 
 export default function App() {
   const [telemetry, setTelemetry] = useState({ activeSessionsCount: 0, sessions: [], locks: [] });
@@ -32,24 +48,91 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
-  // In-App Interactive Chat & Streaming State
-  const [chatMessages, setChatMessages] = useState([
-    {
-      id: 'welcome',
-      role: 'assistant',
-      content: '¡Hola Jorge! Soy tu asistente de Antigravity CLI integrado directamente en AGY Desktop. Todo corre aquí adentro sin necesidad de abrir ventanas de terminal externas. ¿En qué podemos avanzar hoy?',
-      tools: [],
-      thinking: ''
-    }
-  ]);
+  const [sidebarTab, setSidebarTab] = useState('history'); // 'history' | 'mesh'
+  const [savedConversations, setSavedConversations] = useState(loadSavedConversations);
+  
+  const [activeConversationId, setActiveConversationId] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_ACTIVE_ID);
+    if (saved) return saved;
+    const convs = loadSavedConversations();
+    return convs.length > 0 ? convs[0].id : 'conv-' + Date.now();
+  });
+
+  // In-App Interactive Chat & Streaming State (Persisted in localStorage)
+  const [chatMessages, setChatMessages] = useState(() => {
+    try {
+      const activeId = localStorage.getItem(STORAGE_KEY_ACTIVE_ID);
+      const convs = loadSavedConversations();
+      if (activeId && convs.length > 0) {
+        const found = convs.find(c => c.id === activeId);
+        if (found && found.messages && found.messages.length > 0) {
+          return found.messages;
+        }
+      }
+      if (convs.length > 0 && convs[0].messages && convs[0].messages.length > 0) {
+        return convs[0].messages;
+      }
+    } catch (e) {}
+    return [
+      {
+        id: 'welcome',
+        role: 'assistant',
+        content: '¡Hola Jorge! Soy tu asistente de Antigravity CLI integrado directamente en AGY Desktop. Todo corre aquí adentro sin necesidad de abrir ventanas de terminal externas. ¿En qué podemos avanzar hoy?',
+        tools: [],
+        thinking: ''
+      }
+    ];
+  });
   const [chatInput, setChatInput] = useState('');
   const [selectedModel, setSelectedModel] = useState('gemini-3.8-flash-high');
   const [isAgentRunning, setIsAgentRunning] = useState(false);
   const [streamingThought, setStreamingThought] = useState('');
   const [streamingResponse, setStreamingResponse] = useState('');
   const [currentTools, setCurrentTools] = useState([]);
-  const [activeConversationId, setActiveConversationId] = useState('');
   const [showThinking, setShowThinking] = useState(true);
+
+  // Keep activeConversationId synchronized in a ref
+  const activeConversationIdRef = useRef(activeConversationId);
+  useEffect(() => {
+    activeConversationIdRef.current = activeConversationId;
+  }, [activeConversationId]);
+
+  // Auto-persist active conversation to localStorage
+  useEffect(() => {
+    if (!chatMessages || chatMessages.length === 0) return;
+    try {
+      const currentId = activeConversationId || 'conv-default';
+      localStorage.setItem(STORAGE_KEY_ACTIVE_ID, currentId);
+
+      const firstUserMsg = chatMessages.find(m => m.role === 'user');
+      const title = firstUserMsg
+        ? (firstUserMsg.content.slice(0, 36) + (firstUserMsg.content.length > 36 ? '...' : ''))
+        : 'Nueva Conversación';
+
+      setSavedConversations(prev => {
+        const existingIdx = prev.findIndex(c => c.id === currentId);
+        const updated = {
+          id: currentId,
+          title,
+          cliConversationId: currentId.startsWith('conv-') ? null : currentId,
+          updatedAt: new Date().toISOString(),
+          messages: chatMessages
+        };
+
+        let next;
+        if (existingIdx !== -1) {
+          next = [...prev];
+          next[existingIdx] = updated;
+        } else {
+          next = [updated, ...prev];
+        }
+        localStorage.setItem(STORAGE_KEY_CONVS, JSON.stringify(next));
+        return next;
+      });
+    } catch (e) {
+      console.error('Error al persistir conversación en localStorage', e);
+    }
+  }, [chatMessages, activeConversationId]);
 
   // Locks inputs
   const [lockPathInput, setLockPathInput] = useState('');
@@ -107,7 +190,20 @@ export default function App() {
 
         if (event.event === 'init') {
           if (event.conversation_id) {
-            setActiveConversationId(event.conversation_id);
+            const cliId = event.conversation_id;
+            const prevId = activeConversationIdRef.current;
+            setActiveConversationId(cliId);
+            setSavedConversations(prev => {
+              const next = prev.map(c => {
+                if (c.id === prevId || c.id === cliId) {
+                  return { ...c, id: cliId, cliConversationId: cliId };
+                }
+                return c;
+              });
+              localStorage.setItem(STORAGE_KEY_CONVS, JSON.stringify(next));
+              localStorage.setItem(STORAGE_KEY_ACTIVE_ID, cliId);
+              return next;
+            });
           }
         }
 
@@ -234,17 +330,47 @@ export default function App() {
 
   const handleNewConversation = () => {
     if (isAgentRunning) return;
-    setActiveConversationId('');
+    const newId = 'conv-' + Date.now();
+    setActiveConversationId(newId);
     setSelectedSessionId(null);
-    setChatMessages([
+    const welcome = [
       {
         id: 'welcome-' + Date.now(),
         role: 'assistant',
-        content: '¡Nueva sesión iniciada! Todo corre aquí dentro de AGY Desktop sin ventanas de terminal externas. ¿Qué deseas hacer?',
+        content: '¡Nueva conversación iniciada! Todo corre aquí dentro de AGY Desktop sin ventanas de terminal externas. ¿En qué podemos avanzar hoy?',
         tools: [],
         thinking: ''
       }
-    ]);
+    ];
+    setChatMessages(welcome);
+    localStorage.setItem(STORAGE_KEY_ACTIVE_ID, newId);
+    setActiveTab('chat');
+  };
+
+  const handleSelectConversation = (conv) => {
+    if (isAgentRunning) return;
+    setActiveConversationId(conv.id);
+    setSelectedSessionId(conv.cliConversationId || null);
+    setChatMessages(conv.messages || []);
+    localStorage.setItem(STORAGE_KEY_ACTIVE_ID, conv.id);
+    setActiveTab('chat');
+  };
+
+  const handleDeleteConversation = (e, convId) => {
+    e.stopPropagation();
+    if (isAgentRunning) return;
+    setSavedConversations(prev => {
+      const filtered = prev.filter(c => c.id !== convId);
+      localStorage.setItem(STORAGE_KEY_CONVS, JSON.stringify(filtered));
+      if (activeConversationId === convId) {
+        if (filtered.length > 0) {
+          setTimeout(() => handleSelectConversation(filtered[0]), 0);
+        } else {
+          setTimeout(() => handleNewConversation(), 0);
+        }
+      }
+      return filtered;
+    });
   };
 
   const handleLock = async () => {
@@ -334,100 +460,187 @@ export default function App() {
             </button>
           </div>
 
-          {/* Sessions List */}
-          <div className="p-3">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
-                Sesiones Vivas ({telemetry.activeSessionsCount})
-              </span>
-              <button
-                onClick={fetchTelemetry}
-                className="text-gray-400 hover:text-white transition"
-                title="Refrescar"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-              </button>
-            </div>
+          {/* Subtabs for Sidebar: Historial vs Sesiones Vivas */}
+          <div className="px-3 pt-2 pb-2 flex border-b border-[#30363d] gap-1.5">
+            <button
+              onClick={() => setSidebarTab('history')}
+              className={`flex-1 py-1 px-2 text-[11px] font-semibold rounded-md transition flex items-center justify-center gap-1.5 ${
+                sidebarTab === 'history'
+                  ? 'bg-blue-600/20 text-blue-300 border border-blue-500/40 shadow-sm'
+                  : 'text-gray-400 hover:text-gray-200 border border-transparent'
+              }`}
+            >
+              <History className="w-3 h-3" />
+              Historial ({savedConversations.length})
+            </button>
+            <button
+              onClick={() => setSidebarTab('mesh')}
+              className={`flex-1 py-1 px-2 text-[11px] font-semibold rounded-md transition flex items-center justify-center gap-1.5 ${
+                sidebarTab === 'mesh'
+                  ? 'bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
+                  : 'text-gray-400 hover:text-gray-200 border border-transparent'
+              }`}
+            >
+              <Radio className="w-3 h-3" />
+              Mesh ({telemetry.activeSessionsCount})
+            </button>
+          </div>
 
-            <div className="space-y-2 overflow-y-auto max-h-[calc(100vh-230px)] pr-1">
-              {/* Option: Current In-App Chat Session */}
-              <div
-                onClick={() => {
-                  setActiveTab('chat');
-                  setSelectedSessionId(activeConversationId);
-                }}
-                className={`p-3 rounded-lg border cursor-pointer transition relative ${
-                  activeTab === 'chat' && !selectedSessionId
-                    ? 'bg-[#21262d] border-blue-500/60 shadow-md'
-                    : 'bg-[#161b22] border-[#30363d] hover:border-gray-500'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-                    <span className="font-mono text-xs font-bold text-white">
-                      💬 Sesión In-App (Actual)
-                    </span>
-                  </div>
-                  {isAgentRunning && (
-                    <span className="px-1.5 py-0.5 text-[9px] rounded bg-blue-500/20 text-blue-300 font-mono animate-pulse">
-                      EJECUTANDO
-                    </span>
+          {/* List Content */}
+          <div className="p-3">
+            {sidebarTab === 'history' ? (
+              <div>
+                <button
+                  onClick={handleNewConversation}
+                  disabled={isAgentRunning}
+                  className="w-full mb-3 py-2 px-3 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs flex items-center justify-center gap-1.5 transition shadow disabled:opacity-50 cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  Nueva Conversación
+                </button>
+
+                <div className="space-y-2 overflow-y-auto max-h-[calc(100vh-290px)] pr-1">
+                  {savedConversations.length === 0 ? (
+                    <div className="p-4 text-center text-gray-500 text-xs">
+                      No hay conversaciones previas guardadas.
+                    </div>
+                  ) : (
+                    savedConversations.map(conv => {
+                      const isActive = conv.id === activeConversationId;
+                      const dateStr = conv.updatedAt
+                        ? new Date(conv.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        : '';
+                      return (
+                        <div
+                          key={conv.id}
+                          onClick={() => handleSelectConversation(conv)}
+                          className={`p-2.5 rounded-lg border cursor-pointer transition relative group ${
+                            isActive
+                              ? 'bg-[#21262d] border-blue-500/60 shadow-md'
+                              : 'bg-[#161b22] border-[#30363d] hover:border-gray-500'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-semibold text-xs text-white truncate max-w-[180px]">
+                              {conv.title || 'Conversación'}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] text-gray-400 font-mono">{dateStr}</span>
+                              <button
+                                onClick={e => handleDeleteConversation(e, conv.id)}
+                                className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-400 p-0.5 rounded transition cursor-pointer"
+                                title="Borrar conversación"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-[11px] text-gray-400 truncate font-mono">
+                            {conv.messages ? `${conv.messages.length} msgs` : ''}
+                            {conv.cliConversationId ? ` • ID: ${conv.cliConversationId.slice(0, 8)}...` : ''}
+                          </p>
+                        </div>
+                      );
+                    })
                   )}
                 </div>
-                <p className="text-[11px] text-gray-400 truncate">
-                  {activeConversationId ? `ID: ${activeConversationId.slice(0, 8)}...` : 'Listo para interactuar'}
-                </p>
               </div>
+            ) : (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+                    Sesiones Vivas ({telemetry.activeSessionsCount})
+                  </span>
+                  <button
+                    onClick={fetchTelemetry}
+                    className="text-gray-400 hover:text-white transition"
+                    title="Refrescar"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                  </button>
+                </div>
 
-              {/* External / Background Active Sessions */}
-              {telemetry.sessions.map((sess, idx) => {
-                const isSelected = sess.conversationId === selectedSessionId;
-                const hasLocks = sess.locks && sess.locks.length > 0;
-                const hasTasks = sess.activeTasks && sess.activeTasks.length > 0;
-
-                return (
+                <div className="space-y-2 overflow-y-auto max-h-[calc(100vh-290px)] pr-1">
+                  {/* Option: Current In-App Chat Session */}
                   <div
-                    key={sess.conversationId}
                     onClick={() => {
-                      setSelectedSessionId(sess.conversationId);
-                      setActiveConversationId(sess.conversationId);
                       setActiveTab('chat');
+                      setSelectedSessionId(activeConversationId);
                     }}
                     className={`p-3 rounded-lg border cursor-pointer transition relative ${
-                      isSelected
-                        ? 'bg-[#21262d] border-emerald-500/60 shadow-md'
+                      activeTab === 'chat' && !selectedSessionId
+                        ? 'bg-[#21262d] border-blue-500/60 shadow-md'
                         : 'bg-[#161b22] border-[#30363d] hover:border-gray-500'
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                        <span className="font-mono text-xs font-semibold text-gray-200">
-                          #{idx + 1} {sess.conversationId.slice(0, 8)}
+                        <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+                        <span className="font-mono text-xs font-bold text-white">
+                          💬 Sesión In-App (Actual)
                         </span>
                       </div>
-                      {hasTasks && (
-                        <span className="px-1.5 py-0.5 text-[9px] rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-mono animate-pulse">
-                          TASK
+                      {isAgentRunning && (
+                        <span className="px-1.5 py-0.5 text-[9px] rounded bg-blue-500/20 text-blue-300 font-mono animate-pulse">
+                          EJECUTANDO
                         </span>
                       )}
                     </div>
-
-                    <p className="text-xs text-gray-400 line-clamp-2 leading-relaxed">
-                      {sess.lastUserPrompt}
+                    <p className="text-[11px] text-gray-400 truncate">
+                      {activeConversationId ? `ID: ${activeConversationId.slice(0, 8)}...` : 'Listo para interactuar'}
                     </p>
-
-                    {hasLocks && (
-                      <div className="mt-2 flex items-center gap-1 text-[10px] text-amber-400 font-mono">
-                        <Lock className="w-3 h-3 flex-shrink-0" />
-                        <span className="truncate">{sess.locks.map(l => l.target).join(', ')}</span>
-                      </div>
-                    )}
                   </div>
-                );
-              })}
-            </div>
+
+                  {/* External / Background Active Sessions */}
+                  {telemetry.sessions.map((sess, idx) => {
+                    const isSelected = sess.conversationId === selectedSessionId;
+                    const hasLocks = sess.locks && sess.locks.length > 0;
+                    const hasTasks = sess.activeTasks && sess.activeTasks.length > 0;
+
+                    return (
+                      <div
+                        key={sess.conversationId}
+                        onClick={() => {
+                          setSelectedSessionId(sess.conversationId);
+                          setActiveConversationId(sess.conversationId);
+                          setActiveTab('chat');
+                        }}
+                        className={`p-3 rounded-lg border cursor-pointer transition relative ${
+                          isSelected
+                            ? 'bg-[#21262d] border-emerald-500/60 shadow-md'
+                            : 'bg-[#161b22] border-[#30363d] hover:border-gray-500'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                            <span className="font-mono text-xs font-semibold text-gray-200">
+                              #{idx + 1} {sess.conversationId.slice(0, 8)}
+                            </span>
+                          </div>
+                          {hasTasks && (
+                            <span className="px-1.5 py-0.5 text-[9px] rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-mono animate-pulse">
+                              TASK
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="text-xs text-gray-400 line-clamp-2 leading-relaxed">
+                          {sess.lastUserPrompt}
+                        </p>
+
+                        {hasLocks && (
+                          <div className="mt-2 flex items-center gap-1 text-[10px] text-amber-400 font-mono">
+                            <Lock className="w-3 h-3 flex-shrink-0" />
+                            <span className="truncate">{sess.locks.map(l => l.target).join(', ')}</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

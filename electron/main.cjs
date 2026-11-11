@@ -93,7 +93,9 @@ ipcMain.handle('start-turn', async (event, { prompt, model, conversationId, work
   const workspaceDir = workspace || 'C:\\Proyectos\\yoguidev';
   const args = ['-p', prompt, '--output-format', 'stream-json', '--dangerously-skip-permissions'];
   if (model) args.push('--model', model);
-  if (conversationId) args.push('--conversation', conversationId);
+  if (conversationId && !conversationId.startsWith('conv-') && conversationId !== 'draft') {
+    args.push('--conversation', conversationId);
+  }
 
   try {
     activeAgentProcess = spawn(AGY_BIN, args, {
