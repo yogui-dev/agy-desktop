@@ -111,7 +111,7 @@ export default function App() {
       {
         id: 'welcome',
         role: 'assistant',
-        content: '¡Hola Jorge! Soy tu asistente de Antigravity CLI integrado directamente en AGY Desktop. Todo corre aquí adentro sin necesidad de abrir ventanas de terminal externas. ¿En qué podemos avanzar hoy?',
+        content: '¡Hola! Soy tu asistente de Antigravity CLI integrado directamente en AGY Desktop. Todo corre aquí adentro sin necesidad de abrir ventanas de terminal externas. ¿En qué podemos avanzar hoy?',
         tools: [],
         thinking: ''
       }
@@ -127,11 +127,9 @@ export default function App() {
 
   // Workspace & Project Manager
   const [workspace, setWorkspace] = useState(() => {
-    return localStorage.getItem(STORAGE_KEY_WORKSPACE) || 'C:\\Proyectos\\yoguidev';
+    return localStorage.getItem(STORAGE_KEY_WORKSPACE) || '';
   });
-  const [commonWorkspaces, setCommonWorkspaces] = useState([
-    { path: 'C:\\Proyectos\\yoguidev', name: 'yoguidev (Root)' }
-  ]);
+  const [commonWorkspaces, setCommonWorkspaces] = useState([]);
 
   // Slash Commands & Quick Prompts
   const [showSlashMenu, setShowSlashMenu] = useState(false);
@@ -266,7 +264,10 @@ export default function App() {
       if (window.agy.getCommonWorkspaces) {
         window.agy.getCommonWorkspaces()
           .then(w => {
-            if (w && w.length) setCommonWorkspaces(w);
+            if (w && w.length) {
+              setCommonWorkspaces(w);
+              setWorkspace(prev => prev || w[0].path);
+            }
           })
           .catch(err => console.warn('getCommonWorkspaces error:', err));
       }
@@ -438,7 +439,7 @@ export default function App() {
       prompt: fullPrompt,
       model: selectedModel,
       conversationId: activeConversationId || undefined,
-      workspace: workspace || 'C:\\Proyectos\\yoguidev'
+      workspace: workspace || (commonWorkspaces[0]?.path || undefined)
     });
   };
 

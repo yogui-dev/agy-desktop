@@ -38,7 +38,7 @@ Permite interactuar con los agentes de Antigravity en tiempo real, visualizar te
 
 ### 6. 🎙️ Interacción por Voz & Comprensión de Audio (Whisper & Catalina)
 - **Grabación Directa con Micrófono:** Graba instrucciones habladas desde el botón de micrófono en la barra de chat con temporizador en vivo y controles de cancelación/confirmación.
-- **Transcripción Inteligente con OpenAI Whisper:** Transcribe el audio en sub-segundos con sesgo de vocabulario especializado para términos de ingeniería (`Jorge`, `Yogui`, `Antigravity`, `CLI`, `Git`, `Electron`, etc.).
+- **Transcripción Inteligente con OpenAI Whisper:** Transcribe el audio en sub-segundos con sesgo de vocabulario especializado para términos de ingeniería (`Antigravity`, `CLI`, `Git`, `Electron`, `Vite`, `React`, etc.).
 - **Adjuntar y Transcribir Archivos de Audio:** Carga y transcribe archivos de audio existentes (`.mp3`, `.wav`, `.m4a`, `.ogg`, `.webm`, `.flac`).
 - **Lectura en Voz Alta (TTS):** Escucha las respuestas del asistente con la voz chilena oficial **Catalina Cálida** (`es-CL-CatalinaNeural`) mediante el botón de altavoz en cada mensaje.
 
@@ -48,7 +48,7 @@ Permite interactuar con los agentes de Antigravity en tiempo real, visualizar te
 - Sincronización continua de IDs con Antigravity CLI para reanudar el contexto previo del agente.
 
 ### 8. 📂 Selector Dinámico de Workspace & Proyectos
-- Selector directo en la cabecera superior para conmutar entre diferentes carpetas de proyectos del workspace (`C:\Proyectos\yoguidev`, subproyectos o cualquier directorio del equipo).
+- Selector directo en la cabecera superior para conmutar entre diferentes carpetas de proyectos del workspace (raíz de proyectos, subproyectos o cualquier directorio del equipo).
 - Botón de exploración para abrir el selector nativo de carpetas de Windows y cargar cualquier repositorio al vuelo sin reiniciar la aplicación.
 
 ### 9. ⚡ Slash Commands (`/`) & Atajos Rápidos

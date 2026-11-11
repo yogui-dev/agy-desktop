@@ -144,7 +144,7 @@ function getOpenAIApiKey() {
   return '';
 }
 
-const WHISPER_VOCAB_BIAS = "Jorge, Yogui, Antigravity, CLI, Git, Electron, Vite, React, Windows, terminal, código, repositorio, branch, commit, push, pnpm, build, bug, fix, deploy";
+const WHISPER_VOCAB_BIAS = "Antigravity, CLI, Git, Electron, Vite, React, Windows, terminal, código, repositorio, branch, commit, push, pnpm, build, bug, fix, deploy";
 
 async function transcribeAudioPayload(audioBytes, mimeType = 'audio/webm') {
   const apiKey = getOpenAIApiKey();
@@ -286,8 +286,15 @@ ipcMain.handle('select-workspace-dir', async () => {
 });
 
 ipcMain.handle('get-common-workspaces', async () => {
-  const baseDir = 'C:\\Proyectos\\yoguidev';
-  const workspaces = [{ path: baseDir, name: 'yoguidev (Root)' }];
+  const userProjectsDir = path.join(USER_HOME, 'Projects');
+  const yoguiWorkspace = 'C:\\Proyectos\\yoguidev';
+  const baseDir = process.env.AGY_DEFAULT_WORKSPACE ||
+    (fs.existsSync(yoguiWorkspace) ? yoguiWorkspace : null) ||
+    (fs.existsSync(userProjectsDir) ? userProjectsDir : null) ||
+    (fs.existsSync(path.join(USER_HOME, 'Documents')) ? path.join(USER_HOME, 'Documents') : USER_HOME);
+
+  const baseName = path.basename(baseDir) || 'Workspace';
+  const workspaces = [{ path: baseDir, name: `${baseName} (Root)` }];
   try {
     if (fs.existsSync(baseDir)) {
       const items = fs.readdirSync(baseDir, { withFileTypes: true });
@@ -367,7 +374,10 @@ ipcMain.handle('start-turn', async (event, { prompt, model, conversationId, work
     activeAgentProcess = null;
   }
 
-  const workspaceDir = workspace || 'C:\\Proyectos\\yoguidev';
+  const defaultWorkspace = process.env.AGY_DEFAULT_WORKSPACE ||
+    (fs.existsSync('C:\\Proyectos\\yoguidev') ? 'C:\\Proyectos\\yoguidev' : null) ||
+    USER_HOME;
+  const workspaceDir = workspace || defaultWorkspace;
   const args = ['-p', prompt, '--output-format', 'stream-json', '--dangerously-skip-permissions'];
   if (model) args.push('--model', model);
   if (conversationId && !conversationId.startsWith('conv-') && conversationId !== 'draft') {

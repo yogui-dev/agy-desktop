@@ -56,7 +56,7 @@ agy.exe -p "<prompt>" `
 
 ### Process Flags
 - `windowsHide: true`: Completely suppresses Windows console window allocation (`CREATE_NO_WINDOW`).
-- `cwd`: Configured to the user's workspace directory (`C:\Proyectos\yoguidev`).
+- `cwd`: Configured to the user's selected workspace directory (defaults to user projects folder or `USER_HOME`).
 - `env`: Inherits the active process environment (including `PATH`, `LOCALAPPDATA`, `USERPROFILE`).
 
 ### Streaming Events (NDJSON Format)
