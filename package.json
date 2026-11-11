@@ -12,6 +12,7 @@
     "build:ui": "vite build",
     "pack:asar": "node scripts/pack-asar.cjs",
     "build": "pnpm build:ui && pnpm pack:asar",
+    "start": "electron .",
     "dist": "pnpm build && electron-builder --win",
     "dist:portable": "pnpm build && electron-builder --win portable"
   },

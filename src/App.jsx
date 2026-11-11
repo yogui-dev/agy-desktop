@@ -252,25 +252,35 @@ export default function App() {
   useEffect(() => {
     fetchTelemetry();
     if (window.agy) {
-      window.agy.getModels().then(m => {
-        if (m && m.length) {
-          setModels(m);
-          setSelectedModel(m[0].id);
-        }
-      });
+      if (window.agy.getModels) {
+        window.agy.getModels()
+          .then(m => {
+            if (m && m.length) {
+              setModels(m);
+              setSelectedModel(m[0].id);
+            }
+          })
+          .catch(err => console.warn('getModels error:', err));
+      }
 
       if (window.agy.getCommonWorkspaces) {
-        window.agy.getCommonWorkspaces().then(w => {
-          if (w && w.length) setCommonWorkspaces(w);
-        });
+        window.agy.getCommonWorkspaces()
+          .then(w => {
+            if (w && w.length) setCommonWorkspaces(w);
+          })
+          .catch(err => console.warn('getCommonWorkspaces error:', err));
       }
 
       if (window.agy.getMcpStatus) {
-        window.agy.getMcpStatus().then(m => setMcpList(m || []));
+        window.agy.getMcpStatus()
+          .then(m => setMcpList(m || []))
+          .catch(err => console.warn('getMcpStatus error:', err));
       }
 
       if (window.agy.getPluginsStatus) {
-        window.agy.getPluginsStatus().then(p => setPluginsList(p || []));
+        window.agy.getPluginsStatus()
+          .then(p => setPluginsList(p || []))
+          .catch(err => console.warn('getPluginsStatus error:', err));
       }
 
       // Listen for streaming events from background agy process (mounted once)
