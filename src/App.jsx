@@ -341,6 +341,13 @@ export default function App() {
           streamingUsageRef.current = event.step_update.usage;
         }
 
+        if (event.event === 'quota-failover') {
+          const accName = event.nextAccount || 'cuenta siguiente';
+          const notice = `\n\n> ⚠️ *Límite de cuota alcanzado (Intento ${event.attempt}/${event.maxAttempts}).* Conmutando automáticamente a **${accName}**...\n\n`;
+          streamingResponseRef.current += notice;
+          setStreamingResponse(streamingResponseRef.current);
+        }
+
         if (event.event === 'result' && event.result) {
           const finalResp = event.result.response || '';
           if (finalResp) {

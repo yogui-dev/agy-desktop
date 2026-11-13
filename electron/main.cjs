@@ -365,7 +365,48 @@ ipcMain.handle('show-notification', async (_, { title, body }) => {
   return false;
 });
 
-// IPC Handler: Embedded In-App Turn Execution (Zero External Windows)
+// Auto-failover utilities for multi-account
+const QUOTA_ERROR_PATTERNS = [
+  'resource_exhausted',
+  'quota exceeded',
+  'exhausted your capacity',
+  '429 too many requests',
+  'rate limit reached',
+  'rate_limit_exceeded',
+  'resource has been exhausted',
+  'too many requests'
+];
+
+function isQuotaError(text) {
+  if (!text || typeof text !== 'string') return false;
+  const lower = text.toLowerCase();
+  return QUOTA_ERROR_PATTERNS.some(p => lower.includes(p));
+}
+
+function rotateAccount() {
+  return new Promise((resolve) => {
+    const agyAccountScript = path.join(path.dirname(AGY_BIN), 'agy-account.py');
+    if (!fs.existsSync(agyAccountScript)) {
+      console.warn('[Auto-Failover] agy-account.py no encontrado');
+      return resolve(null);
+    }
+    execFile('python', [agyAccountScript, 'rotate'], { windowsHide: true, timeout: 5000 }, (err, stdout) => {
+      if (err) {
+        console.error('[Auto-Failover] Error rotando cuenta:', err.message);
+        return resolve(null);
+      }
+      const match = (stdout || '').match(/Conmutado exitosamente a perfil '([^']+)'/i) ||
+                    (stdout || '').match(/Cuenta activa:\s*([^\s]+)/i);
+      const newAcc = match ? match[1] : 'siguiente cuenta';
+      console.log(`[Auto-Failover] Conmutado exitosamente a: ${newAcc}`);
+      resolve(newAcc);
+    });
+  });
+}
+
+let isTurnCancelled = false;
+
+// IPC Handler: Embedded In-App Turn Execution (Zero External Windows) with Multi-Account Auto-Failover
 ipcMain.handle('start-turn', async (event, { prompt, model, conversationId, workspace }) => {
   if (!fs.existsSync(AGY_BIN)) return { error: 'agy.exe no encontrado en el sistema' };
 
@@ -374,87 +415,145 @@ ipcMain.handle('start-turn', async (event, { prompt, model, conversationId, work
     activeAgentProcess = null;
   }
 
+  isTurnCancelled = false;
   const defaultWorkspace = process.env.AGY_DEFAULT_WORKSPACE ||
     (fs.existsSync('C:\\Proyectos\\yoguidev') ? 'C:\\Proyectos\\yoguidev' : null) ||
     USER_HOME;
   const workspaceDir = workspace || defaultWorkspace;
-  const args = ['-p', prompt, '--output-format', 'stream-json', '--dangerously-skip-permissions'];
-  if (model) args.push('--model', model);
-  if (conversationId && !conversationId.startsWith('conv-') && conversationId !== 'draft') {
-    args.push('--conversation', conversationId);
-  }
 
-  try {
-    activeAgentProcess = spawn(AGY_BIN, args, {
-      cwd: workspaceDir,
-      windowsHide: true, // Invisible, zero external terminal windows!
-      env: process.env
-    });
+  let currentConvId = conversationId;
+  const maxAttempts = 3;
 
-    let buffer = '';
+  const runAttempt = (attempt) => {
+    return new Promise((resolve) => {
+      if (isTurnCancelled) {
+        return resolve({ cancelled: true });
+      }
 
-    activeAgentProcess.stdout.on('data', chunk => {
-      buffer += chunk.toString('utf8');
-      const lines = buffer.split('\n');
-      buffer = lines.pop(); // Keep trailing incomplete line
+      const args = ['-p', prompt, '--output-format', 'stream-json', '--dangerously-skip-permissions'];
+      if (model) args.push('--model', model);
+      if (currentConvId && !currentConvId.startsWith('conv-') && currentConvId !== 'draft') {
+        args.push('--conversation', currentConvId);
+      }
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-          const parsed = JSON.parse(trimmed);
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('stream-event', parsed);
+      let detectedQuota = false;
+      let buffer = '';
+
+      try {
+        activeAgentProcess = spawn(AGY_BIN, args, {
+          cwd: workspaceDir,
+          windowsHide: true, // Invisible, zero external terminal windows!
+          env: process.env
+        });
+
+        activeAgentProcess.stdout.on('data', chunk => {
+          buffer += chunk.toString('utf8');
+          const lines = buffer.split('\n');
+          buffer = lines.pop(); // Keep trailing incomplete line
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const parsed = JSON.parse(trimmed);
+              if (parsed.conversation_id) {
+                currentConvId = parsed.conversation_id;
+              }
+              if (parsed.status === 'ERROR' || parsed.error || (parsed.result && parsed.result.status === 'ERROR')) {
+                if (isQuotaError(JSON.stringify(parsed))) {
+                  detectedQuota = true;
+                }
+              }
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('stream-event', parsed);
+              }
+            } catch (e) {
+              if (isQuotaError(trimmed)) {
+                detectedQuota = true;
+              }
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('stream-event', { event: 'log', text: trimmed });
+              }
+            }
           }
-        } catch (e) {
-          // Plain log line
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('stream-event', { event: 'log', text: trimmed });
+        });
+
+        activeAgentProcess.stderr.on('data', chunk => {
+          const errText = chunk.toString('utf8').trim();
+          if (errText) {
+            if (isQuotaError(errText)) {
+              detectedQuota = true;
+            }
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('stream-event', { event: 'stderr', text: errText });
+            }
           }
-        }
+        });
+
+        activeAgentProcess.on('close', async code => {
+          activeAgentProcess = null;
+
+          if (isTurnCancelled) {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('turn-finished', { code: 1, cancelled: true });
+            }
+            return resolve({ cancelled: true });
+          }
+
+          // Auto-Failover: Si detectamos límite de cuota y aún nos quedan intentos con otras cuentas
+          if (detectedQuota && attempt < maxAttempts) {
+            console.warn(`[Auto-Failover] Límite de cuota detectado (intento ${attempt}/${maxAttempts}). Conmutando cuenta...`);
+            const nextAccount = await rotateAccount();
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('stream-event', {
+                event: 'quota-failover',
+                attempt,
+                maxAttempts,
+                nextAccount: nextAccount || 'cuenta siguiente'
+              });
+            }
+            await new Promise(r => setTimeout(r, 600));
+            return resolve(await runAttempt(attempt + 1));
+          }
+
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('turn-finished', { code });
+          }
+          if (Notification.isSupported() && (!mainWindow || !mainWindow.isFocused() || !mainWindow.isVisible())) {
+            try {
+              const icon = getAppIcon();
+              new Notification({
+                title: '🛸 AGY Desktop',
+                body: code === 0 ? 'Turno completado exitosamente.' : 'El turno terminó con advertencias o errores.',
+                icon: (icon && !icon.isEmpty()) ? icon : undefined
+              }).show();
+            } catch (e) {}
+          }
+          resolve({ success: code === 0 });
+        });
+
+        activeAgentProcess.on('error', err => {
+          activeAgentProcess = null;
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('stream-event', { event: 'error', error: err.message });
+            mainWindow.webContents.send('turn-finished', { code: 1, error: err.message });
+          }
+          resolve({ error: err.message });
+        });
+
+      } catch (err) {
+        activeAgentProcess = null;
+        resolve({ error: err.message });
       }
     });
+  };
 
-    activeAgentProcess.stderr.on('data', chunk => {
-      const errText = chunk.toString('utf8').trim();
-      if (errText && mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('stream-event', { event: 'stderr', text: errText });
-      }
-    });
-
-    activeAgentProcess.on('close', code => {
-      activeAgentProcess = null;
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('turn-finished', { code });
-      }
-      if (Notification.isSupported() && (!mainWindow || !mainWindow.isFocused() || !mainWindow.isVisible())) {
-        try {
-          const icon = getAppIcon();
-          new Notification({
-            title: '🛸 AGY Desktop',
-            body: code === 0 ? 'Turno completado exitosamente.' : 'El turno terminó con advertencias o errores.',
-            icon: (icon && !icon.isEmpty()) ? icon : undefined
-          }).show();
-        } catch (e) {}
-      }
-    });
-
-    activeAgentProcess.on('error', err => {
-      activeAgentProcess = null;
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('stream-event', { event: 'error', error: err.message });
-        mainWindow.webContents.send('turn-finished', { code: 1, error: err.message });
-      }
-    });
-
-    return { success: true };
-  } catch (err) {
-    activeAgentProcess = null;
-    return { error: err.message };
-  }
+  runAttempt(1);
+  return { success: true };
 });
 
 ipcMain.handle('cancel-turn', async () => {
+  isTurnCancelled = true;
   if (activeAgentProcess) {
     try {
       activeAgentProcess.kill();
